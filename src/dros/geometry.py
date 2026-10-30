@@ -10,17 +10,17 @@ import numpy as np
 class DeltaGeometry:
     """Rotary delta robot geometry, SI units.
 
-    base_radius:     centre of base -> shoulder joint axis (m)
-    effector_radius: centre of effector -> wrist (lower-arm attach) point (m)
-    upper_arm:       shoulder axis -> elbow (m)
-    lower_arm:       elbow -> wrist, parallelogram length (m)
-    joint_min/max:   joint limits (rad), theta = 0 is horizontal, + is down
+    base_radius:         centre of base -> shoulder joint axis (m)
+    end_effector_radius: centre of end-effector -> wrist (lower-arm attach) point (m)
+    upper_arm:           shoulder axis -> elbow (m)
+    lower_arm:           elbow -> wrist, parallelogram length (m)
+    joint_min/max:       joint limits (rad), theta = 0 is horizontal, + is down
 
     The defaults are PLACEHOLDERS until the printed robot is measured.
     """
 
     base_radius: float = 0.060
-    effector_radius: float = 0.025
+    end_effector_radius: float = 0.025
     upper_arm: float = 0.090
     lower_arm: float = 0.200
     joint_min: float = -0.6

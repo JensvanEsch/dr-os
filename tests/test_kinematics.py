@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from deltakit import DeltaGeometry, UnreachableError, forward, inverse
-from deltakit.servo import MockBus, rad_to_ticks, safe_write, ticks_to_rad
+from dros import DeltaGeometry, UnreachableError, forward, inverse
+from dros.servo import MockBus, rad_to_ticks, safe_write, ticks_to_rad
 
 GEOM = DeltaGeometry()
 RNG = np.random.default_rng(0)

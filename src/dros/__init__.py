@@ -1,4 +1,4 @@
-"""deltakit - kinematics and control for a cheap open-source delta robot."""
+"""dros - kinematics and control for a cheap open-source delta robot."""
 from .geometry import DeltaGeometry
 from .kinematics import UnreachableError, forward, inverse
 

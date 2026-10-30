@@ -13,7 +13,7 @@
 | Parameter | Value (m) | How measured |
 |-----------|-----------|--------------|
 | base_radius | | |
-| effector_radius | | |
+| end_effector_radius | | |
 | upper_arm | | |
 | lower_arm | | |
 

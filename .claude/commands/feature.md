@@ -1,5 +1,5 @@
 ---
-description: Plan and implement a feature the deltakit way (plan, ADR if needed, tests, code)
+description: Plan and implement a feature the dr-os way (plan, ADR if needed, tests, code)
 argument-hint: <what to build>
 ---
 Feature request: $ARGUMENTS

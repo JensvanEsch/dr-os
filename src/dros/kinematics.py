@@ -10,15 +10,15 @@ from .geometry import DeltaGeometry
 
 
 class UnreachableError(ValueError):
-    """The requested pose or joint configuration has no valid solution."""
+    """The requested position or joint configuration has no valid solution."""
 
 
 def _elbows_shifted(geom: DeltaGeometry, theta: np.ndarray) -> np.ndarray:
-    """Elbow positions shifted inward by effector_radius (3x3, one row per arm).
+    """Elbow positions shifted inward by end_effector_radius (3x3, one row per arm).
 
-    The effector centre lies at distance lower_arm from every one of these points.
+    The end-effector centre lies at distance lower_arm from every one of these points.
     """
-    rho = geom.base_radius - geom.effector_radius + geom.upper_arm * np.cos(theta)
+    rho = geom.base_radius - geom.end_effector_radius + geom.upper_arm * np.cos(theta)
     phi = geom.arm_angles
     return np.column_stack(
         [rho * np.cos(phi), rho * np.sin(phi), -geom.upper_arm * np.sin(theta)]
@@ -26,14 +26,14 @@ def _elbows_shifted(geom: DeltaGeometry, theta: np.ndarray) -> np.ndarray:
 
 
 def inverse(geom: DeltaGeometry, p) -> np.ndarray:
-    """Joint angles (rad, shape (3,)) that place the effector centre at p (m).
+    """Joint angles (rad, shape (3,)) that place the end-effector centre at p (m).
 
     Picks the elbow-out branch. Raises UnreachableError if p is out of reach.
     Joint limits are NOT checked here; use geom.check_joint_limits.
     """
     x, y, z = np.asarray(p, dtype=float)
     L, l = geom.upper_arm, geom.lower_arm
-    offset = geom.base_radius - geom.effector_radius
+    offset = geom.base_radius - geom.end_effector_radius
     theta = np.empty(3)
 
     for i, phi in enumerate(geom.arm_angles):
@@ -56,7 +56,7 @@ def inverse(geom: DeltaGeometry, p) -> np.ndarray:
         candidates = (base + d, base - d)
 
         # elbow-out: elbow lies on the outer side of the shoulder->wrist line
-        wx, wz = xr + geom.effector_radius - geom.base_radius, z
+        wx, wz = xr + geom.end_effector_radius - geom.base_radius, z
         side = [wx * (-L * np.sin(c)) - wz * (L * np.cos(c)) for c in candidates]
         t = candidates[0] if side[0] >= side[1] else candidates[1]
         theta[i] = (t + np.pi) % (2.0 * np.pi) - np.pi  # wrap to (-pi, pi]
@@ -65,10 +65,10 @@ def inverse(geom: DeltaGeometry, p) -> np.ndarray:
 
 
 def forward(geom: DeltaGeometry, theta) -> np.ndarray:
-    """Effector centre position (m, shape (3,)) for joint angles theta (rad).
+    """End-effector centre position (m, shape (3,)) for joint angles theta (rad).
 
     Intersection of three spheres of radius lower_arm; the lower solution
-    (effector below the base) is returned.
+    (end-effector below the base) is returned.
     """
     theta = np.asarray(theta, dtype=float)
     p1, p2, p3 = _elbows_shifted(geom, theta)

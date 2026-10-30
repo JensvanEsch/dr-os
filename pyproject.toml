@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "deltakit"
+name = "dr-os"
 version = "0.0.1"
 description = "Software ecosystem for a cheap open-source delta robot (STS3215 servos)"
 requires-python = ">=3.10"
