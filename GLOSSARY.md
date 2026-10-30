@@ -1,0 +1,90 @@
+# dr-os — Delta Robot Open Source
+
+dr-os is an open-source software ecosystem for cheap, 3D-printed rotary
+(Clavel-type) delta robots driven by Feetech STS3215 serial-bus servos. This
+glossary is the single source of truth for the project's vocabulary: code, docs,
+and commit messages use these words and no others. The `_Avoid_` lists are
+binding — if you reach for one of those words, use the canonical term instead.
+
+## Mechanism
+
+**Arm**:
+One of the three identical kinematic chains connecting the base to the
+end-effector. The robot has exactly three, indexed 0–2. Each arm is made of an
+upper arm and a lower arm (below), so "arm" names the whole chain and never a
+single link.
+_Avoid_: Limb, leg
+
+**Upper arm**:
+The rigid link of an arm driven directly by the shoulder, running shoulder →
+elbow.
+_Avoid_: Proximal link, bicep, crank
+
+**Lower arm**:
+The link of an arm running elbow → wrist. Physically a parallelogram of two
+parallel rods — this is what keeps the end-effector level and gives the robot
+its 3-DOF, translation-only motion.
+_Avoid_: Distal link, forearm, rod (a single rod is one half of one lower arm)
+
+**Base**:
+The fixed platform that carries the three shoulders. Origin of the robot's
+reference frame.
+_Avoid_: Fixed platform, frame plate
+
+**End-effector**:
+The moving platform at the business end of the three arms. Its location is a
+position (see below); it carries no tool yet.
+_Avoid_: Effector, moving platform, traveling plate, TCP
+
+**Tool / TCP**:
+Reserved, not yet built. A device mounted on the end-effector — gripper, pen,
+probe — together with its tool-center-point. Distinct from the end-effector;
+to be defined by its own ADR when one exists.
+
+## Joints
+
+**Shoulder**:
+The actuated joint where an upper arm meets the base. The only driven joint;
+one per limb.
+_Avoid_: Base joint, hip, actuator joint
+
+**Elbow**:
+The passive joint where the upper arm meets the lower arm.
+_Avoid_: Knee
+
+**Wrist**:
+The passive joint where the lower arm meets the end-effector.
+_Avoid_: Platform joint
+
+## Motion & frames
+
+**Theta (θ)**:
+The angle of a shoulder, in radians. θ = 0 is the upper arm horizontal;
+positive θ rotates the upper arm downward.
+_Avoid_: q, joint var, servo angle
+
+**Position**:
+The location of the end-effector in the base frame: three translational degrees
+of freedom (x, y, z), no orientation. A delta end-effector cannot be tilted, so
+it never has a "pose".
+_Avoid_: Pose, coordinate, point
+
+**Forward (kinematics)**:
+The map from the three shoulder angles (θ) to the end-effector position.
+_Avoid_: FK, direct kinematics
+
+**Inverse (kinematics)**:
+The map from an end-effector position to the three shoulder angles (θ).
+_Avoid_: IK
+
+## Control & hardware
+
+**Joint bus**:
+The hardware-agnostic interface through which shoulder angles are read and
+commanded. The mock bus and the real servo driver both implement it.
+_Avoid_: Driver, controller, port
+
+**Ticks**:
+Raw STS3215 encoder counts — 4096 per revolution. Converting SI radians to ticks
+happens only in the servo layer.
+_Avoid_: Counts, steps, position units
