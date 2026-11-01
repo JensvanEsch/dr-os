@@ -54,6 +54,6 @@ Small payload, no hard requirements: cheap and reproducible beats fast.
 ## Status
 - [ ] Measure the printed robot and replace the placeholder dimensions in DeltaGeometry
 - [ ] Servo bring-up: assign IDs 1-3, find zero offsets and directions
-- [ ] Pick a licence for the open-source release
+- [x] Pick a licence for the open-source release
 - [ ] Workspace plot / reachability map
 - [ ] Digital twin in `sim/`

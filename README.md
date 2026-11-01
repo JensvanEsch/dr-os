@@ -12,3 +12,5 @@ pytest
 Status: early development. See `docs/devlog/` for progress.
 
 Project vocabulary is defined in [`GLOSSARY.md`](GLOSSARY.md).
+
+The software is licensed under [Apache-2.0](LICENSE).

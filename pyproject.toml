@@ -7,6 +7,7 @@ name = "dr-os"
 version = "0.0.1"
 description = "Software ecosystem for a cheap open-source delta robot (STS3215 servos)"
 requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
 dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
