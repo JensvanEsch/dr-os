@@ -5,18 +5,18 @@ How the engineering skills should consume this repo's domain documentation when 
 ## Before exploring, read these
 
 - **`GLOSSARY.md`** at the repo root.
-- **`docs/decisions/`**: read ADRs that touch the area you're about to work in.
+- **`docs/adr/`**: read ADRs that touch the area you're about to work in.
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
 
 ## File structure
 
-Single-context repo. ADRs live in `docs/decisions/`, not the `docs/adr/` some skills assume:
+Single-context repo:
 
 ```
 /
 ├── GLOSSARY.md
-├── docs/decisions/
+├── docs/adr/
 │   ├── 0001-sts3215-servos.md
 │   ├── 0002-canonical-vocabulary.md
 │   └── 0003-apache-2-licence.md

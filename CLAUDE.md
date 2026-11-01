@@ -8,7 +8,7 @@ Small payload, no hard requirements: cheap and reproducible beats fast.
 ## Conventions (do not change without an ADR)
 - **Vocabulary:** the project's canonical terms are fixed in `GLOSSARY.md`
   (binding, including its _Avoid_ lists); the lock is recorded in
-  `docs/decisions/0002-canonical-vocabulary.md`. Use those words in code,
+  `docs/adr/0002-canonical-vocabulary.md`. Use those words in code,
   comments, and commits (e.g. "arm" is a whole chain, never a single link).
 - **Units:** SI everywhere in code (m, rad, s). Convert to servo ticks only inside
   `src/dros/servo/`.
@@ -27,7 +27,7 @@ Small payload, no hard requirements: cheap and reproducible beats fast.
 - `src/dros/sim/`          - digital twin (not started)
 - `tests/`                     - pytest; kinematics round-trip tests live here
 - `hw/`                        - scripts that touch real hardware (see safety rules)
-- `docs/decisions/`            - short ADRs (context, decision, consequences)
+- `docs/adr/`                  - short ADRs (context, decision, consequences)
 - `docs/devlog/`               - dated development notes, source for posts/videos
 - `docs/hardware.md`           - BOM, measured dimensions, servo IDs, wiring
 
@@ -45,7 +45,7 @@ Small payload, no hard requirements: cheap and reproducible beats fast.
   Develop against `MockBus` by default.
 - Joint limits are enforced in one place (`DeltaGeometry.check_joint_limits`)
   and checked before any command reaches a bus.
-- Architectural decisions go in `docs/decisions/NNNN-title.md`.
+- Architectural decisions go in `docs/adr/NNNN-title.md`.
 - Keep dependencies minimal; heavy things (sim, viz, hardware SDK) go behind
   optional extras in pyproject.toml.
 - Small commits with human-readable messages - I turn them into devlog posts.
@@ -63,7 +63,7 @@ The five default role names are used unchanged. See `docs/agents/triage-labels.m
 
 ### Domain docs
 
-Single-context: `GLOSSARY.md` at the root, ADRs in `docs/decisions/`. See `docs/agents/domain.md`.
+Single-context: `GLOSSARY.md` at the root, ADRs in `docs/adr/`. See `docs/agents/domain.md`.
 
 ## Status
 - [ ] Measure the printed robot and replace the placeholder dimensions in DeltaGeometry

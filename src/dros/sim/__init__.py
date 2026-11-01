@@ -1,1 +1,1 @@
-"""Digital twin - not started. Ideas go in docs/decisions before code goes here."""
+"""Digital twin - not started. Ideas go in docs/adr before code goes here."""
