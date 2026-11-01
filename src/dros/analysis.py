@@ -138,6 +138,22 @@ def _disc(radius: float) -> np.ndarray:
     return np.array(offsets)
 
 
+def _disc_representatives(samples: int) -> np.ndarray:
+    """For each of _disc's samples, the index of the sample that stands in for it.
+
+    Arms sit 120 deg apart with shared limits and each mirrors the workspace, so an
+    angle on a ring reaches what its image between 0 and 60 deg reaches, up to
+    rounding: within a few 1e-16 rad of a joint limit the two can differ.
+    """
+    period = len(_RING_ANGLES) // 3
+    steps = np.arange(len(_RING_ANGLES)) % period
+    wedge = np.minimum(steps, period - steps)
+    rings = (samples - 1) // len(_RING_ANGLES)
+    return np.concatenate(
+        [[0], *(1 + ring * len(_RING_ANGLES) + wedge for ring in range(rings))]
+    )
+
+
 def check_cylinder(geom: DeltaGeometry, target: TargetCylinder = DEFAULT_TARGET) -> CylinderCheck:
     """Check whether geom can reach all of target, sliding it along z to find the best fit.
 
@@ -150,8 +166,12 @@ def check_cylinder(geom: DeltaGeometry, target: TargetCylinder = DEFAULT_TARGET)
     depth = max(geom.upper_arm + geom.lower_arm, target.height)
     layers = -spacing * np.arange(ceil(depth / spacing) + 1)
     disc = _disc(target.diameter / 2.0)
+    representatives = _disc_representatives(len(disc))
 
-    causes = [[unreachable_cause(geom, [x, y, z]) for x, y in disc] for z in layers]
+    causes = []
+    for z in layers:
+        found = {i: unreachable_cause(geom, [*disc[i], z]) for i in np.unique(representatives)}
+        causes.append([found[i] for i in representatives])
     misses = np.array([sum(c is not None for c in layer) for layer in causes])
 
     # A placement spans intervals + 1 neighbouring layers. Of the equally good ones

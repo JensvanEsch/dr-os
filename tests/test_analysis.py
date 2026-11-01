@@ -184,3 +184,24 @@ def test_rest_position_is_reachable_and_within_joint_limits():
     geom = DeltaGeometry()
     assert reachable(geom, geom.rest_position)
     geom.check_joint_limits(inverse(geom, geom.rest_position))
+
+
+def test_every_shortfall_is_really_out_of_reach_for_the_cause_given():
+    check = check_cylinder(BOWL, TargetCylinder())
+    assert not check.passed
+    for shortfall in check.shortfalls:
+        assert unreachable_cause(BOWL, shortfall.position) is shortfall.cause
+
+
+def test_a_passing_cylinder_holds_up_when_resampled_more_densely():
+    # 146 mm is about the widest this geometry fits. The grid here is finer than the
+    # check's and includes angles it skips, so a sample standing in for the wrong
+    # position shows up as a miss.
+    target = TargetCylinder(diameter=0.146, height=0.100)
+    check = check_cylinder(BOWL, target)
+    assert check.passed
+    radii = np.linspace(0.0, target.diameter / 2, 19)
+    angles = np.deg2rad(np.arange(0.0, 360.0, 5.0))
+    heights = check.centre_z + np.linspace(-1.0, 1.0, 11) * target.height / 2
+    r, a, z = np.meshgrid(radii, angles, heights)
+    assert reachable(BOWL, np.stack([r * np.cos(a), r * np.sin(a), z], axis=-1)).all()
