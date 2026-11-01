@@ -23,6 +23,7 @@ Small payload, no hard requirements: cheap and reproducible beats fast.
 ## Layout
 - `src/dros/geometry.py`   - DeltaGeometry: dimensions + joint limits
 - `src/dros/kinematics.py` - inverse / forward kinematics
+- `src/dros/analysis.py`   - reachability and the target cylinder check
 - `src/dros/servo/`        - JointBus protocol, MockBus, STS3215 tick conversion
 - `src/dros/sim/`          - digital twin (not started)
 - `tests/`                     - pytest; kinematics round-trip tests live here

@@ -15,6 +15,7 @@ class DeltaGeometry:
     upper_arm:           shoulder axis -> elbow (m)
     lower_arm:           elbow -> wrist, parallelogram length (m)
     joint_min/max:       joint limits (rad), theta = 0 is horizontal, + is down
+    rest_position:       position the end-effector rests at before torque off (m)
 
     The defaults are PLACEHOLDERS until the printed robot is measured.
     """
@@ -25,6 +26,7 @@ class DeltaGeometry:
     lower_arm: float = 0.200
     joint_min: float = -0.6
     joint_max: float = 1.4
+    rest_position: tuple[float, float, float] = (0.0, 0.0, -0.250)
 
     @property
     def arm_angles(self) -> np.ndarray:
