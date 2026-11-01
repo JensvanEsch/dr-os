@@ -51,6 +51,20 @@ Small payload, no hard requirements: cheap and reproducible beats fast.
 - Small commits with human-readable messages - I turn them into devlog posts.
 - When unsure about a physical dimension, ask; do not guess numbers.
 
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues (JensvanEsch/dr-os) via the gh CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default role names are used unchanged. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` at the root, ADRs in `docs/decisions/`. See `docs/agents/domain.md`.
+
 ## Status
 - [ ] Measure the printed robot and replace the placeholder dimensions in DeltaGeometry
 - [ ] Servo bring-up: assign IDs 1-3, find zero offsets and directions
