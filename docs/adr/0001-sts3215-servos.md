@@ -1,5 +1,7 @@
 # 0001 - STS3215 serial-bus servos instead of steppers
 
+Partly superseded by ADR 0004: serial-bus servos stay, the specific model is open.
+
 ## Context
 The earlier delta robot used NEMA23 steppers with ~40 cm arms: too large and too
 expensive. The new goal is the cheapest possible open-source delta robot.
