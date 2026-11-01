@@ -36,8 +36,8 @@ class DeltaGeometry:
     def check_joint_limits(self, theta: np.ndarray) -> None:
         """Raise ValueError if any joint angle is outside the limits."""
         theta = np.asarray(theta, dtype=float)
-        bad = (theta < self.joint_min) | (theta > self.joint_max)
-        if np.any(bad):
+        good = (theta >= self.joint_min) & (theta <= self.joint_max)  # False for NaN
+        if not np.all(good):
             raise ValueError(
                 f"joint limits [{self.joint_min}, {self.joint_max}] rad violated: {theta}"
             )
