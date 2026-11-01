@@ -74,8 +74,26 @@ The low position the end-effector moves to before torque is turned off, so it is
 never dropped from height.
 _Avoid_: Park, home
 
+**Workspace**:
+Every position the end-effector can reach, given the arm lengths and joint
+limits.
+_Avoid_: Work area, envelope
+
+**Target cylinder**:
+The upright volume on the z axis that a geometry's workspace must cover, given
+by a diameter and a height.
+_Avoid_: Work volume
+
+**Placement**:
+Where along z a target cylinder sits. The check searches for the best one.
+
+**Shortfall**:
+A position inside the target cylinder that the end-effector cannot reach.
+
 **Forward (kinematics)**:
-The map from the three shoulder angles (θ) to the end-effector position.
+The map from the three shoulder angles (θ) to the end-effector position. Three
+angles allow two positions; it returns the lower one, and a position that only
+the upper one gives counts as out of reach.
 _Avoid_: FK, direct kinematics
 
 **Inverse (kinematics)**:

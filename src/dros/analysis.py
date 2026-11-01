@@ -6,6 +6,7 @@ from enum import Enum
 from math import ceil
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 from .geometry import DeltaGeometry
 from .kinematics import UnreachableError, forward, inverse
@@ -27,7 +28,7 @@ class Cause(Enum):
     UPPER_SOLUTION = "upper forward solution"
 
 
-def unreachable_cause(geom: DeltaGeometry, position) -> Cause | None:
+def unreachable_cause(geom: DeltaGeometry, position: ArrayLike) -> Cause | None:
     """Why the end-effector cannot reach position (m), or None if it can.
 
     forward() returns the lower of its two solutions, so a position that only the
@@ -49,7 +50,7 @@ def unreachable_cause(geom: DeltaGeometry, position) -> Cause | None:
     return None if np.allclose(back, position, rtol=0.0, atol=1e-8) else Cause.UPPER_SOLUTION
 
 
-def reachable(geom: DeltaGeometry, positions) -> np.ndarray:
+def reachable(geom: DeltaGeometry, positions: ArrayLike) -> np.ndarray:
     """Which positions (m, shape (..., 3)) the end-effector can reach (bool, shape (...))."""
     positions = np.asarray(positions, dtype=float)
     flat = [unreachable_cause(geom, p) is None for p in positions.reshape(-1, 3)]
@@ -58,7 +59,7 @@ def reachable(geom: DeltaGeometry, positions) -> np.ndarray:
 
 @dataclass(frozen=True)
 class TargetCylinder:
-    """Work area a geometry must cover: upright and centred on the z axis, SI units.
+    """Volume a geometry must cover: upright and centred on the z axis, SI units.
 
     The z placement is not part of the target; check_cylinder finds the best one.
     """
@@ -106,11 +107,11 @@ class CylinderCheck:
         lines = [f"FAIL: {size} does not fit. Best is {placement}, {count} out of reach:"]
         for cause in Cause:
             hits = [s.position for s in self.shortfalls if s.cause is cause]
-            if hits:
-                x, y, z = np.array(hits).T
+            for band in _z_bands(np.array(hits).reshape(-1, 3)):
+                x, y, z = band.T
                 radius = np.hypot(x, y)
                 lines.append(
-                    f"  {cause.value}: {len(hits)} positions, "
+                    f"  {cause.value}: {len(band)} positions, "
                     f"z {z.min():.3f} to {z.max():.3f} m, "
                     f"radius {radius.min():.3f} to {radius.max():.3f} m"
                 )
@@ -118,6 +119,15 @@ class CylinderCheck:
 
 
 DEFAULT_TARGET = TargetCylinder()
+
+
+def _z_bands(positions: np.ndarray) -> list[np.ndarray]:
+    """Split positions (shape (N, 3)) into runs of neighbouring layers, lowest first."""
+    if len(positions) == 0:
+        return []
+    ordered = positions[np.argsort(positions[:, 2])]
+    gaps = np.flatnonzero(np.diff(ordered[:, 2]) > 1.5 * _LAYER_SPACING)
+    return np.split(ordered, gaps + 1)
 
 
 def _disc(radius: float) -> np.ndarray:

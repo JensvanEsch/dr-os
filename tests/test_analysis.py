@@ -4,7 +4,15 @@ import numpy as np
 import pytest
 
 from dros import DeltaGeometry, inverse
-from dros.analysis import Cause, TargetCylinder, check_cylinder, reachable, unreachable_cause
+from dros.analysis import (
+    Cause,
+    CylinderCheck,
+    Shortfall,
+    TargetCylinder,
+    check_cylinder,
+    reachable,
+    unreachable_cause,
+)
 
 # Shoulder offset 0.06 m, so a centred end-effector forms a 6-8-10 triangle at
 # theta = 0: elbow at radius 0.08, lower arm 0.10, wrist 0.06 below.
@@ -29,6 +37,18 @@ STRETCHED = DeltaGeometry(
     lower_arm=0.06,
     joint_min=-np.pi,
     joint_max=np.pi,
+)
+
+
+# joint_min carves a bowl under each arm. Its tip is at radius 0.035 + 0.09 cos(0.6)
+# = 0.109 m and z = 0.09 sin(0.6) - 0.2 = -0.149 m.
+BOWL = DeltaGeometry(
+    base_radius=0.060,
+    end_effector_radius=0.025,
+    upper_arm=0.090,
+    lower_arm=0.200,
+    joint_min=-0.6,
+    joint_max=1.4,
 )
 
 
@@ -89,17 +109,15 @@ def test_cylinder_taller_than_the_joint_limits_allow_fails():
 
 
 def test_the_target_size_can_be_changed():
-    assert check_cylinder(DeltaGeometry(), TargetCylinder(diameter=0.040, height=0.040)).passed
-    assert not check_cylinder(DeltaGeometry(), TargetCylinder(diameter=0.300, height=0.040)).passed
+    assert check_cylinder(LIMITED, TargetCylinder(diameter=0.001, height=0.030)).passed
+    assert not check_cylinder(LIMITED, TargetCylinder(diameter=0.200, height=0.030)).passed
 
 
 def test_a_small_hole_in_the_workspace_is_not_stepped_over():
-    # joint_min carves a bowl under each arm. Its tip is at radius 0.035 + 0.09 cos(0.6)
-    # = 0.109 m and z = 0.09 sin(0.6) - 0.2 = -0.149 m, so this cylinder's top layer
-    # has a hole about 0.11 m out from the axis, with reachable positions all around it.
-    geom = DeltaGeometry()
-    assert not reachable(geom, [0.1095, 0.0, -0.1482])
-    assert not check_cylinder(geom, TargetCylinder(diameter=0.260, height=0.0266)).passed
+    # This cylinder's top layer cuts the bowl just under its tip, leaving a hole about
+    # 0.11 m out from the axis with reachable positions all around it.
+    assert not reachable(BOWL, [0.1095, 0.0, -0.1482])
+    assert not check_cylinder(BOWL, TargetCylinder(diameter=0.260, height=0.0266)).passed
 
 
 def test_the_default_target_is_160_mm_wide_and_100_mm_tall():
@@ -123,6 +141,25 @@ def test_a_failed_check_says_where_the_geometry_falls_short():
     report = str(check)
     assert "FAIL" in report
     assert "joint limits" in report
+
+
+def test_report_keeps_separate_bands_of_misses_apart():
+    check = CylinderCheck(
+        target=TargetCylinder(),
+        centre_z=-0.2,
+        samples=100,
+        shortfalls=(
+            Shortfall((0.08, 0.0, -0.15), Cause.JOINT_LIMITS),
+            Shortfall((0.07, 0.0, -0.152), Cause.JOINT_LIMITS),
+            Shortfall((0.08, 0.0, -0.25), Cause.JOINT_LIMITS),
+            Shortfall((0.08, 0.0, -0.25), Cause.ARM_LENGTH),
+        ),
+    )
+    assert str(check).splitlines()[1:] == [
+        "  arm length: 1 positions, z -0.250 to -0.250 m, radius 0.080 to 0.080 m",
+        "  joint limits: 1 positions, z -0.250 to -0.250 m, radius 0.080 to 0.080 m",
+        "  joint limits: 2 positions, z -0.152 to -0.150 m, radius 0.070 to 0.080 m",
+    ]
 
 
 def test_report_of_a_passing_check_names_the_placement():
