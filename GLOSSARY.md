@@ -45,7 +45,7 @@ to be defined by its own ADR when one exists.
 
 **Shoulder**:
 The actuated joint where an upper arm meets the base. The only driven joint;
-one per limb.
+one per arm.
 _Avoid_: Base joint, hip, actuator joint
 
 **Elbow**:
@@ -69,6 +69,11 @@ of freedom (x, y, z), no orientation. A delta end-effector cannot be tilted, so
 it never has a "pose".
 _Avoid_: Pose, coordinate, point
 
+**Rest position**:
+The low position the end-effector moves to before torque is turned off, so it is
+never dropped from height.
+_Avoid_: Park, home
+
 **Forward (kinematics)**:
 The map from the three shoulder angles (θ) to the end-effector position.
 _Avoid_: FK, direct kinematics
@@ -81,10 +86,32 @@ _Avoid_: IK
 
 **Joint bus**:
 The hardware-agnostic interface through which shoulder angles are read and
-commanded. The mock bus and the real servo driver both implement it.
+commanded. It speaks SI and knows nothing about motors. The mock bus, the sim bus
+and the Feetech bus all implement it.
 _Avoid_: Driver, controller, port
 
+**Mock bus**:
+A joint bus that stores what it is told and moves instantly. It has no motion of
+its own.
+_Avoid_: Fake, stub
+
+**Sim bus**:
+A joint bus that imitates servo motion: limited speed and acceleration, tick
+rounding, and torque on or off. It has no physics; forces, inertia and gravity
+belong to the digital twin.
+_Avoid_: Simulator, emulator, digital twin
+
+**Feetech bus**:
+The joint bus for real Feetech UART-bus servos. It covers every Feetech model the
+project uses.
+_Avoid_: STS3215 bus, servo driver
+
+**Digital twin**:
+Not yet built. A physics model of the whole robot, including its closed chains,
+inertia and gravity.
+_Avoid_: Sim, simulator
+
 **Ticks**:
-Raw STS3215 encoder counts — 4096 per revolution. Converting SI radians to ticks
-happens only in the servo layer.
+Raw servo encoder counts, 4096 per revolution on Feetech servos. Converting SI
+radians to ticks happens only in the servo layer.
 _Avoid_: Counts, steps, position units
