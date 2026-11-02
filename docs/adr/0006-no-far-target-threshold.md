@@ -14,10 +14,11 @@ servos on connect (ADR 0005), so a far target moves at bounded speed, and that
 still holds if our process stalls.
 
 ## Decision
-A joint bus takes only max speed (rad/s) and max acceleration (rad/s^2) as motion
-limits. `write_angles` checks joint limits through
-`DeltaGeometry.check_joint_limits` and refuses commands while torque is off. It
-does not refuse far targets. The rest of ADR 0005 stands.
+A joint bus takes only max velocity (rad/s) and max acceleration (rad/s^2) as
+motion limits, named velocity rather than the "max speed" of ADR 0005.
+`write_angles` checks joint limits through `DeltaGeometry.check_joint_limits` and
+refuses commands while torque is off. It does not refuse far targets. The rest of
+ADR 0005 stands.
 
 ## Considered options
 - Keeping the threshold: a second guard against a bad command, but redundant with

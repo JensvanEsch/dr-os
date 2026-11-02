@@ -130,6 +130,12 @@ commanded. It speaks SI and knows nothing about motors. The mock bus, the sim bu
 and the Feetech bus all implement it.
 _Avoid_: Driver, controller, port
 
+**Max velocity / max acceleration**:
+The limits on how fast a shoulder may turn (rad/s) and how fast that may change
+(rad/s²), given to every joint bus when it is created. A Feetech register named
+"speed" holds the servo's copy in its own units.
+_Avoid_: Max speed
+
 **Joint bus contract**:
 The shared test suite (`tests/joint_bus_contract.py`) that every joint bus must
 pass: joint limits, refusal with torque off, and read-back.

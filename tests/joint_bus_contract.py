@@ -14,7 +14,7 @@ from dros import DeltaGeometry
 from dros.servo import RAD_PER_TICK, JointBus
 
 GEOM = DeltaGeometry()
-LIMITS = {"max_speed": 3.0, "max_acceleration": 10.0}  # rad/s, rad/s^2
+LIMITS = {"max_velocity": 3.0, "max_acceleration": 10.0}  # rad/s, rad/s^2
 # A bus may round what it reads back to one tick.
 READ_BACK_TOLERANCE = RAD_PER_TICK
 
@@ -25,7 +25,7 @@ class JointBusContract:
         geom: DeltaGeometry,
         start_angles: ArrayLike,
         *,
-        max_speed: float,
+        max_velocity: float,
         max_acceleration: float,
     ) -> JointBus:
         """A bus with its shoulders at `start_angles` (rad) and torque off.

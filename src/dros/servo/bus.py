@@ -20,9 +20,9 @@ class JointBus(Protocol):
     def close(self) -> None: ...
 
 
-def check_motion_limits(max_speed: float, max_acceleration: float) -> None:
+def check_motion_limits(max_velocity: float, max_acceleration: float) -> None:
     """Raise ValueError unless the speed and acceleration limits are positive and finite."""
-    for name, value in {"max_speed": max_speed, "max_acceleration": max_acceleration}.items():
+    for name, value in {"max_velocity": max_velocity, "max_acceleration": max_acceleration}.items():
         if not (np.isfinite(value) and value > 0):
             raise ValueError(f"{name} must be positive and finite, got {value}")
 
@@ -43,7 +43,7 @@ def check_target(geom: DeltaGeometry, theta: ArrayLike) -> np.ndarray:
 class MockBus:
     """In-memory joint bus for development and tests. Moves instantly.
 
-    max_speed (rad/s) and max_acceleration (rad/s^2) are accepted like on any bus,
+    max_velocity (rad/s) and max_acceleration (rad/s^2) are accepted like on any bus,
     but the mock bus has no motion of its own to apply them to.
     """
 
@@ -51,13 +51,13 @@ class MockBus:
         self,
         geom: DeltaGeometry,
         *,
-        max_speed: float,
+        max_velocity: float,
         max_acceleration: float,
         start_angles: ArrayLike = (0.0, 0.0, 0.0),
     ) -> None:
-        check_motion_limits(max_speed, max_acceleration)
+        check_motion_limits(max_velocity, max_acceleration)
         self.geom = geom
-        self.max_speed = max_speed
+        self.max_velocity = max_velocity
         self.max_acceleration = max_acceleration
         self._theta = np.asarray(start_angles, dtype=float).copy()
         self._torque_on = False
