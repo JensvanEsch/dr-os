@@ -84,6 +84,14 @@ class JointBusContract:
             atol=READ_BACK_TOLERANCE,
         )
 
+    def test_a_target_on_the_joint_limits_settles_inside_them(self):
+        # Rounding to ticks must not leave a shoulder outside the limits.
+        bus = self.bus()
+        bus.enable_torque()
+        bus.write_angles([GEOM.joint_max, GEOM.joint_min, 0.3])
+        self.settle(bus)
+        GEOM.check_joint_limits(bus.read_angles())
+
     @pytest.mark.parametrize("target", [[0.2], [0.2, 0.3], [0.2, 0.3, 0.4, 0.5]])
     def test_a_target_without_three_angles_is_refused(self, target):
         bus = self.bus()

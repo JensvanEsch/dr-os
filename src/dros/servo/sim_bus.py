@@ -6,7 +6,7 @@ from numpy.typing import ArrayLike
 
 from ..geometry import DeltaGeometry
 from .bus import check_motion_limits, check_target
-from .sts3215 import rad_to_ticks, ticks_to_rad
+from .sts3215 import RAD_PER_TICK, rad_to_ticks, ticks_to_rad
 
 
 class SimBus:
@@ -35,8 +35,12 @@ class SimBus:
     def write_angles(self, theta: np.ndarray) -> None:
         if not self._torque_on:
             raise RuntimeError("torque is off: turn it on before commanding the shoulders")
-        # Like a servo's goal position, the target is a whole number of ticks.
-        self._target = _on_ticks(check_target(self.geom, theta))
+        # Like a servo's goal position, the target is a whole number of ticks,
+        # rounded towards the inside of the joint limits so it never ends past them.
+        target = _on_ticks(check_target(self.geom, theta))
+        target[target > self.geom.joint_max] -= RAD_PER_TICK
+        target[target < self.geom.joint_min] += RAD_PER_TICK
+        self._target = target
 
     def enable_torque(self) -> None:
         # Like a servo, hold the present position rather than chase an old target.
@@ -79,36 +83,39 @@ _EPS = 1e-12
 
 
 def _follow(
-    x: float, v: float, goal: float, dt: float, v_max: float, a_max: float
+    theta: float, velocity: float, goal: float, dt: float, v_max: float, a_max: float
 ) -> tuple[float, float]:
-    """Move one shoulder from angle x and velocity v towards goal for dt seconds.
+    """Move one shoulder from angle theta and velocity towards goal for dt seconds.
 
-    Time-optimal under |v| <= v_max and |a| <= a_max, ending at rest on the goal.
-    The motion is a chain of constant-acceleration segments, each stepped exactly.
-    Returns the new angle and velocity.
+    Time-optimal under |velocity| <= v_max and |acceleration| <= a_max, ending at
+    rest on the goal. The motion is a chain of constant-acceleration segments, each
+    stepped exactly. Returns the new angle and velocity.
     """
     while dt > 0:
-        # Work in a frame where the goal lies ahead (in the + direction).
-        s = 1.0 if goal >= x else -1.0
-        d, u = s * (goal - x), s * v
-        if d <= _EPS and abs(u) <= _EPS:
+        # Work in a frame where the goal lies ahead, in the + direction.
+        ahead = 1.0 if goal >= theta else -1.0
+        distance, speed = ahead * (goal - theta), ahead * velocity
+        if distance <= _EPS and abs(speed) <= _EPS:
             return goal, 0.0
-        stopping = u * u / (2 * a_max) if u > 0 else 0.0
-        if u < 0:  # moving away: stop first
-            a, t, lands = a_max, -u / a_max, False
-        elif stopping > d + _EPS:  # too fast to stop on the goal: stop past it
-            a, t, lands = -a_max, u / a_max, False
-        elif stopping >= d - _EPS:  # brake onto the goal
-            a, t, lands = -u * u / (2 * d), 2 * d / u, True
-        elif u >= v_max - _EPS:  # cruise until it is time to brake
-            a, t, lands = 0.0, (d - stopping) / u, False
-        else:  # speed up, towards the max velocity or the point where braking must start
-            peak = min(v_max, np.sqrt(a_max * d + u * u / 2))
-            a, t, lands = a_max, (peak - u) / a_max, False
-        if lands and t <= dt:
+        stopping = speed * speed / (2 * a_max) if speed > 0 else 0.0
+        if speed < 0:  # moving away: stop first
+            accel, duration, lands = a_max, -speed / a_max, False
+        elif stopping > distance + _EPS:  # too fast to stop on the goal: stop past it
+            accel, duration, lands = -a_max, speed / a_max, False
+        elif stopping >= distance - _EPS:  # brake onto the goal
+            if distance <= _EPS:  # already on it, creeping slower than _EPS per second
+                return goal, 0.0
+            accel = -speed * speed / (2 * distance)
+            duration, lands = 2 * distance / speed, True
+        elif speed >= v_max - _EPS:  # cruise until it is time to brake
+            accel, duration, lands = 0.0, (distance - stopping) / speed, False
+        else:  # speed up, to the max velocity or until braking must start
+            peak = min(v_max, np.sqrt(a_max * distance + speed * speed / 2))
+            accel, duration, lands = a_max, (peak - speed) / a_max, False
+        if lands and duration <= dt:
             return goal, 0.0
-        h = min(t, dt)
-        x += s * (u * h + a * h * h / 2)
-        v = s * (u + a * h)
-        dt -= h
-    return x, v
+        step = min(duration, dt)
+        theta += ahead * (speed * step + accel * step * step / 2)
+        velocity = ahead * (speed + accel * step)
+        dt -= step
+    return theta, velocity
