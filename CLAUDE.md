@@ -28,9 +28,11 @@ Small payload, no hard requirements: cheap and reproducible beats fast.
 - `src/dros/motion.py`     - `set_end_effector_position` (m) / `set_shoulder_angles` (rad) check the
   request, send one joint target and return; waiting and ending a run belong to the application
 - `src/dros/viz.py`        - workspace plot (optional `viz` extra, matplotlib)
-- `src/dros/servo/`        - JointBus protocol and its safety checks, MockBus, SimBus, STS3215 tick conversion
+- `src/dros/servo/`        - JointBus protocol and its safety checks, MockBus, SimBus, and FeetechBus
+  (`feetech.py`: tick conversion, the per-model table for STS and HLS, the register port it talks through)
 - `src/dros/sim/`          - digital twin (not started)
-- `tests/`                     - pytest; kinematics round-trip tests live here
+- `tests/`                     - pytest; kinematics round-trip tests, and the fake servo (`fake_servo.py`)
+  that stands in for real servos behind the register port
 - `hw/`                        - scripts that touch real hardware (see safety rules)
 - `demo/`                      - scripts that touch no hardware, e.g. the workspace plot
 - `docs/adr/`                  - short ADRs (context, decision, consequences)

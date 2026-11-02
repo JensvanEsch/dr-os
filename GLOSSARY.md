@@ -153,8 +153,21 @@ _Avoid_: Simulator, emulator, digital twin
 
 **Feetech bus**:
 The joint bus for real Feetech UART-bus servos. It covers every Feetech model the
-project uses.
+project uses, with differences such as tick resolution and register units kept in
+a per-model table.
 _Avoid_: STS3215 bus, servo driver
+
+**Register port**:
+What the Feetech bus reads and writes servo registers through, by servo ID. The
+only part that touches a serial port. It speaks ticks and register units, never SI,
+and is not a joint bus.
+_Avoid_: Serial driver, joint bus
+
+**Fake servo**:
+In-memory Feetech servos behind a register port, for tests. It holds registers and
+moves to its goal at once while torque is on. Not a joint bus: the mock bus and the
+sim bus are those.
+_Avoid_: Mock servo, emulator
 
 **Digital twin**:
 Not yet built. A physics model of the whole robot, including its closed chains,
