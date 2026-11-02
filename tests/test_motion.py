@@ -5,6 +5,7 @@ import pytest
 
 from dros import DeltaGeometry, UnreachableError, forward, inverse
 from dros.motion import (
+    ShoulderOutsideLimitsError,
     move_end_effector_position,
     move_shoulder_angles,
     set_end_effector_position,
@@ -93,6 +94,19 @@ def test_a_position_that_is_not_finite_raises_before_any_bus_command(bad, axis):
     with pytest.raises(ValueError, match="not finite"):
         move_end_effector_position(bus, GEOM, position, sleep=bus.advance)
     assert bus.calls == []
+
+
+@pytest.mark.parametrize("arm", range(3))
+@pytest.mark.parametrize("past", ["joint_min", "joint_max"])
+def test_starting_outside_the_joint_limits_stops_and_asks_to_reposition_by_hand(arm, past):
+    start = np.full(3, 0.5)
+    start[arm] = GEOM.joint_min - 0.05 if past == "joint_min" else GEOM.joint_max + 0.05
+    bus = CallLogBus(start_angles=start)
+    with pytest.raises(ShoulderOutsideLimitsError, match=rf"arm {arm}.*by hand"):
+        move_end_effector_position(bus, GEOM, GEOM.rest_position, sleep=bus.advance)
+    assert "write_angles" not in bus.calls
+    bus.advance(1.0)
+    assert np.allclose(bus.read_angles(), start, rtol=0, atol=RAD_PER_TICK / 2)
 
 
 def test_a_long_move_goes_out_as_one_joint_target():
@@ -186,7 +200,7 @@ def test_move_end_effector_position_reaches_a_position_on_simulated_time():
 def test_move_shoulder_angles_returns_with_the_shoulders_at_rest_on_the_target():
     bus = sim_bus()
     target = np.array([0.9, 1.1, 0.3])
-    move_shoulder_angles(bus, target, sleep=bus.advance)
+    move_shoulder_angles(bus, GEOM, target, sleep=bus.advance)
     arrived = bus.read_angles()
     bus.advance(1.0)
     assert np.array_equal(bus.read_angles(), arrived)
@@ -197,7 +211,7 @@ def test_move_shoulder_angles_returns_with_the_shoulders_at_rest_on_the_target()
 def test_set_shoulder_angles_sends_the_target_and_returns_without_waiting():
     bus = sim_bus()
     target = np.array([0.9, 1.1, 0.3])
-    set_shoulder_angles(bus, target)
+    set_shoulder_angles(bus, GEOM, target)
     assert np.array_equal(bus.read_angles(), [0.0, 0.0, 0.0])  # no time has passed
     bus.advance(2.0)
     assert np.allclose(bus.read_angles(), target, rtol=0, atol=RAD_PER_TICK / 2)

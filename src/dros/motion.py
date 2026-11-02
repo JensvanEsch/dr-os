@@ -40,11 +40,36 @@ def _shoulder_angles_for(geom: DeltaGeometry, position: ArrayLike) -> np.ndarray
     return theta
 
 
-def set_shoulder_angles(bus: JointBus, theta: ArrayLike) -> None:
+class ShoulderOutsideLimitsError(RuntimeError):
+    """A shoulder measures outside its joint limits, so no motion was sent.
+
+    The operator has to move that arm back inside its limits by hand.
+    """
+
+
+def _check_start(bus: JointBus, geom: DeltaGeometry) -> None:
+    """Raise ShoulderOutsideLimitsError if any measured shoulder angle is outside the limits."""
+    measured = bus.read_angles()
+    for arm, theta in enumerate(measured):
+        try:
+            geom.check_joint_limits(theta)
+        except ValueError:
+            raise ShoulderOutsideLimitsError(
+                f"arm {arm} measures {theta:.3f} rad, outside the joint limits "
+                f"[{geom.joint_min}, {geom.joint_max}] rad, so nothing was moved. "
+                "Switch the servo power off, move that arm back inside its limits by hand, "
+                "and start again."
+            ) from None
+
+
+def set_shoulder_angles(bus: JointBus, geom: DeltaGeometry, theta: ArrayLike) -> None:
     """Send `theta` (rad) as the joint target and return without waiting.
 
-    `write_angles` checks the joint limits and refuses while torque is off.
+    Raises ShoulderOutsideLimitsError, with no motion sent, if the measured angles
+    start outside the joint limits. `write_angles` checks the target against the
+    joint limits and refuses while torque is off.
     """
+    _check_start(bus, geom)
     bus.write_angles(np.asarray(theta, dtype=float))
 
 
@@ -52,13 +77,14 @@ def set_end_effector_position(bus: JointBus, geom: DeltaGeometry, position: Arra
     """Send the joint target for `position` (m) and return without waiting.
 
     Raises UnreachableError before any bus command if the position is out of the
-    workspace.
+    workspace, and ShoulderOutsideLimitsError as `set_shoulder_angles` does.
     """
-    set_shoulder_angles(bus, _shoulder_angles_for(geom, position))
+    set_shoulder_angles(bus, geom, _shoulder_angles_for(geom, position))
 
 
 def move_shoulder_angles(
     bus: JointBus,
+    geom: DeltaGeometry,
     theta: ArrayLike,
     *,
     sleep: Callable[[float], None] = time.sleep,
@@ -74,7 +100,7 @@ def move_shoulder_angles(
     clock's advance as `sleep` to run on virtual time.
     """
     target = np.asarray(theta, dtype=float)
-    set_shoulder_angles(bus, target)
+    set_shoulder_angles(bus, geom, target)
     before = bus.read_angles()
     while True:
         sleep(poll_interval)
@@ -101,6 +127,7 @@ def move_end_effector_position(
     """
     move_shoulder_angles(
         bus,
+        geom,
         _shoulder_angles_for(geom, position),
         sleep=sleep,
         poll_interval=poll_interval,
