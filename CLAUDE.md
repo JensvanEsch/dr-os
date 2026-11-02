@@ -23,7 +23,9 @@ Small payload, no hard requirements: cheap and reproducible beats fast.
 ## Layout
 - `src/dros/geometry.py`   - DeltaGeometry: dimensions + joint limits
 - `src/dros/kinematics.py` - inverse / forward kinematics, jacobian, singularity margin
-- `src/dros/analysis.py`   - reachability, the target cylinder check, worst-case torque, tick error
+- `src/dros/analysis.py`   - reachability, the target cylinder check, worst-case torque, tick error,
+  workspace map data
+- `src/dros/viz.py`        - workspace plot (optional `viz` extra, matplotlib)
 - `src/dros/servo/`        - JointBus protocol, MockBus, STS3215 tick conversion
 - `src/dros/sim/`          - digital twin (not started)
 - `tests/`                     - pytest; kinematics round-trip tests live here
@@ -33,7 +35,7 @@ Small payload, no hard requirements: cheap and reproducible beats fast.
 - `docs/hardware.md`           - BOM, measured dimensions, servo IDs, wiring
 
 ## Commands
-- Install: `pip install -e ".[dev]"`
+- Install: `pip install -e ".[dev,viz]"` (without `viz` the plot tests skip)
 - Test: `pytest`
 - Lint: `ruff check .`
 
@@ -70,5 +72,5 @@ Single-context: `GLOSSARY.md` at the root, ADRs in `docs/adr/`. See `docs/agents
 - [ ] Measure the printed robot and replace the placeholder dimensions in DeltaGeometry
 - [ ] Servo bring-up: assign IDs 1-3, find zero offsets and directions
 - [x] Pick a licence for the open-source release
-- [ ] Workspace plot / reachability map
+- [x] Workspace plot / reachability map
 - [ ] Digital twin in `sim/`
