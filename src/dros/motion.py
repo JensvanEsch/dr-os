@@ -37,3 +37,22 @@ def move_to(
     bus.write_angles(target)
     while np.any(np.abs(bus.read_angles() - target) > tolerance):
         sleep(poll_interval)
+
+
+def first_move(
+    bus: JointBus,
+    geom: DeltaGeometry,
+    *,
+    depth: float = 0.020,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """The first move: from the rest position `depth` (m) down in z, back, torque off.
+
+    Torque turns on at the start and off only at the end, with the end-effector at
+    the rest position, so it is never dropped from height.
+    """
+    rest = np.array(geom.rest_position, dtype=float)
+    bus.enable_torque()
+    for position in (rest, rest - [0.0, 0.0, depth], rest):
+        move_to(bus, geom, position, sleep=sleep)
+    bus.disable_torque()
