@@ -25,7 +25,8 @@ Small payload, no hard requirements: cheap and reproducible beats fast.
 - `src/dros/kinematics.py` - inverse / forward kinematics, jacobian, singularity margin
 - `src/dros/analysis.py`   - reachability, the target cylinder check, worst-case torque, tick error,
   workspace map data
-- `src/dros/motion.py`     - `move_to`: a position in metres, one joint target, waits until reached
+- `src/dros/motion.py`     - `set_end_effector_position` (m) on top of `set_shoulder_angles` (rad):
+  one joint target each, waits until the shoulders settle
 - `src/dros/viz.py`        - workspace plot (optional `viz` extra, matplotlib)
 - `src/dros/servo/`        - JointBus protocol and its safety checks, MockBus, SimBus, STS3215 tick conversion
 - `src/dros/sim/`          - digital twin (not started)
