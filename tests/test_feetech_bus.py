@@ -125,3 +125,20 @@ def test_the_sts_and_hls_families_both_drive_a_feetech_bus(model):
     bus.write_angles([0.2, 0.3, 0.4])
     assert np.allclose(bus.read_angles(), [0.2, 0.3, 0.4], atol=RAD_PER_TICK)
     assert all(value > 0 for value in register(servos, GOAL_SPEED) + register(servos, ACCELERATION))
+
+
+def test_turning_torque_on_holds_a_shoulder_moved_by_hand_rather_than_chasing_the_old_goal():
+    servos = fake_servos_at([0.1, 0.2, 0.3])
+    bus = connect(servos)
+    bus.enable_torque()
+    bus.write_angles([0.2, 0.3, 0.4])
+    bus.disable_torque()
+    servos.move_by_hand(1, int(rad_to_ticks(0.6)))
+    bus.enable_torque()
+    assert np.allclose(bus.read_angles(), [0.6, 0.3, 0.4], atol=RAD_PER_TICK)
+
+
+def test_closing_the_bus_releases_the_port():
+    servos = fake_servos_at([0.1, 0.2, 0.3])
+    connect(servos).close()
+    assert servos.closed
