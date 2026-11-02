@@ -65,3 +65,24 @@ def test_read_back_angles_are_rounded_to_ticks_at_rest_and_while_moving():
     assert on_ticks(bus.read_angles())
     bus.advance(10.0)
     assert on_ticks(bus.read_angles())
+
+
+def test_with_torque_off_the_sim_bus_does_not_move():
+    bus = sim_bus()
+    bus.write_angles([1.0, 0.5, 0.0])
+    bus.advance(0.2)
+    stopped_at = bus.read_angles()
+    bus.disable_torque()
+    bus.advance(10.0)
+    assert np.array_equal(bus.read_angles(), stopped_at)
+
+
+def test_turning_torque_back_on_holds_the_shoulders_where_they_are():
+    bus = sim_bus()
+    bus.write_angles([1.0, 0.5, 0.0])
+    bus.advance(0.2)
+    bus.disable_torque()
+    stopped_at = bus.read_angles()
+    bus.enable_torque()
+    bus.advance(10.0)
+    assert np.allclose(bus.read_angles(), stopped_at, atol=RAD_PER_TICK)

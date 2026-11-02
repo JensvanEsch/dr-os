@@ -39,9 +39,14 @@ class SimBus:
         self._target = _on_ticks(check_target(self.geom, theta))
 
     def enable_torque(self) -> None:
+        # Like a servo, hold the present position rather than chase an old target.
+        self._target = _on_ticks(self._theta)
+        self._velocity[:] = 0.0
         self._torque_on = True
 
     def disable_torque(self) -> None:
+        # No physics: without torque the shoulders stop and stay where they are.
+        self._velocity[:] = 0.0
         self._torque_on = False
 
     def close(self) -> None:
@@ -49,6 +54,8 @@ class SimBus:
 
     def advance(self, dt: float) -> None:
         """Advance simulated time by dt seconds; each shoulder moves towards its target."""
+        if not self._torque_on:
+            return
         for i in range(3):
             self._theta[i], self._velocity[i] = _follow(
                 self._theta[i],
