@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import pytest
 from joint_bus_contract import JointBusContract
@@ -86,3 +88,20 @@ def test_turning_torque_back_on_holds_the_shoulders_where_they_are():
     bus.enable_torque()
     bus.advance(10.0)
     assert np.allclose(bus.read_angles(), stopped_at, atol=RAD_PER_TICK)
+
+
+def test_simulated_time_advances_only_through_an_explicit_call_without_real_waiting():
+    bus = sim_bus()
+    bus.write_angles([1.0, 0.5, 0.0])
+    assert reached(bus, [0.0, 0.0, 0.0])
+    started = time.monotonic()
+    bus.advance(60.0)
+    assert time.monotonic() - started < 0.5
+    assert reached(bus, [1.0, 0.5, 0.0])
+
+
+@pytest.mark.parametrize("dt", [-0.1, np.nan, np.inf])
+def test_simulated_time_cannot_run_backwards_or_jump_by_an_unusable_step(dt):
+    bus = sim_bus()
+    with pytest.raises(ValueError, match="dt"):
+        bus.advance(dt)

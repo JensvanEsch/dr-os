@@ -54,6 +54,8 @@ class SimBus:
 
     def advance(self, dt: float) -> None:
         """Advance simulated time by dt seconds; each shoulder moves towards its target."""
+        if not (np.isfinite(dt) and dt >= 0):
+            raise ValueError(f"dt must be zero or more seconds and finite, got {dt}")
         if not self._torque_on:
             return
         for i in range(3):
