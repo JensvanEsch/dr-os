@@ -29,14 +29,21 @@ def move_to(
     """Move the end-effector to `position` (m) and wait until the shoulders reach it.
 
     The joint target goes out in one `write_angles`. The wait polls `read_angles`
-    every `poll_interval` seconds through `sleep`, until every shoulder is within
-    `tolerance` (rad) of its target. Pass a simulated clock's advance as `sleep` to
-    run on virtual time.
+    every `poll_interval` seconds through `sleep`, until the shoulders have settled:
+    every one within `tolerance` (rad) of its target, and the reading unchanged since
+    the poll before. `tolerance` only has to cover how far the bus rounds a target;
+    settling is what puts the end-effector on it. Pass a simulated clock's advance
+    as `sleep` to run on virtual time.
     """
     target = inverse(geom, position)
     bus.write_angles(target)
-    while np.any(np.abs(bus.read_angles() - target) > tolerance):
+    before = bus.read_angles()
+    while True:
         sleep(poll_interval)
+        now = bus.read_angles()
+        if np.array_equal(now, before) and np.all(np.abs(now - target) <= tolerance):
+            return
+        before = now
 
 
 def first_move(
