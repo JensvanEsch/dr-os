@@ -61,8 +61,8 @@ class FeetechModel:
     ticks_per_rev:        encoder ticks per revolution
     speed_unit:           ticks/s per unit of the speed register
     acceleration_unit:    ticks/s^2 per unit of the acceleration register
-    max_speed:            largest speed register value
-    max_acceleration:     largest acceleration register value
+    speed_register_max:   largest speed register value
+    acceleration_register_max: largest acceleration register value
     full_torque_limit:    torque limit register value for the servo's full torque
     """
 
@@ -70,8 +70,8 @@ class FeetechModel:
     ticks_per_rev: int
     speed_unit: float
     acceleration_unit: float
-    max_speed: int
-    max_acceleration: int
+    speed_register_max: int
+    acceleration_register_max: int
     full_torque_limit: int
 
 
@@ -81,8 +81,8 @@ STS = FeetechModel(
     ticks_per_rev=4096,
     speed_unit=1.0,
     acceleration_unit=100.0,
-    max_speed=32767,
-    max_acceleration=254,
+    speed_register_max=32767,
+    acceleration_register_max=254,
     full_torque_limit=1000,
 )
 HLS = FeetechModel(
@@ -90,8 +90,8 @@ HLS = FeetechModel(
     ticks_per_rev=4096,
     speed_unit=1.0,
     acceleration_unit=100.0,
-    max_speed=32767,
-    max_acceleration=254,
+    speed_register_max=32767,
+    acceleration_register_max=254,
     full_torque_limit=1000,
 )
 
@@ -114,6 +114,10 @@ class FeetechBus:
     the torque limit to every servo, so the servos hold to them even if this
     process stalls (ADR 0005). `torque_limit` is a fraction of the servo's full
     torque, in (0, 1].
+
+    The bus leaves the servos' torque as it finds it: a servo still holding from an
+    earlier run keeps holding rather than dropping the end-effector. Targets are
+    refused until `enable_torque`, which holds the present position first.
     """
 
     def __init__(
@@ -175,13 +179,13 @@ class FeetechBus:
         """Write the motion and torque limits to every servo, in the model's units."""
         ticks_per_rad = self.model.ticks_per_rev / (2 * np.pi)
         speed = _register_value(
-            self.max_velocity * ticks_per_rad / self.model.speed_unit, self.model.max_speed
+            self.max_velocity * ticks_per_rad / self.model.speed_unit, self.model.speed_register_max
         )
         acceleration = _register_value(
             self.max_acceleration * ticks_per_rad / self.model.acceleration_unit,
-            self.model.max_acceleration,
+            self.model.acceleration_register_max,
         )
-        torque = round(torque_limit * self.model.full_torque_limit)
+        torque = max(round(torque_limit * self.model.full_torque_limit), 1)  # 0 is no torque
         for servo_id in self._ids:
             self._write(servo_id, _GOAL_SPEED, speed)
             self._write(servo_id, _ACCELERATION, acceleration)
@@ -206,7 +210,7 @@ def _register_value(units: float, largest: int) -> int:
     """A speed or acceleration in register units, rounded down and kept in [1, largest].
 
     Never 0: on the HLS a speed of 0 stops the servo, while on the STS it is believed
-    to mean no limit at all (ADR 0004). Above `largest` the register can't hold it,
+    to mean maximum speed (ADR 0004), and an acceleration of 0 no ramp at all. Above `largest` the register can't hold it,
     so the servo runs at its own maximum.
     """
     return min(max(int(units), 1), largest)

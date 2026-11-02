@@ -92,8 +92,8 @@ COARSE = FeetechModel(
     ticks_per_rev=1024,
     speed_unit=50.0,
     acceleration_unit=10.0,
-    max_speed=1000,
-    max_acceleration=100,
+    speed_register_max=1000,
+    acceleration_register_max=100,
     full_torque_limit=200,
 )
 
@@ -142,3 +142,10 @@ def test_closing_the_bus_releases_the_port():
     servos = fake_servos_at([0.1, 0.2, 0.3])
     connect(servos).close()
     assert servos.closed
+
+
+def test_a_small_torque_limit_is_never_sent_as_zero():
+    # 0.0004 of full torque is 0.4 in 0.1 % units, which would round to "no torque".
+    servos = fake_servos_at([0.1, 0.2, 0.3])
+    connect(servos, torque_limit=0.0004)
+    assert register(servos, TORQUE_LIMIT) == [1, 1, 1]
