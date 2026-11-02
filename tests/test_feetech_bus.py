@@ -57,3 +57,29 @@ def test_a_new_bus_writes_full_torque_unless_told_otherwise():
 def test_a_bus_cannot_be_made_with_an_unusable_torque_limit(bad):
     with pytest.raises(ValueError, match="torque_limit"):
         connect(fake_servos_at([0.1, 0.2, 0.3]), torque_limit=bad)
+
+
+# 1e-4 rad/s is 0.07 ticks/s and 1e-3 rad/s^2 is 0.007 units: both round down to 0.
+def test_a_limit_that_rounds_down_to_zero_is_sent_as_the_smallest_nonzero_value():
+    servos = fake_servos_at([0.1, 0.2, 0.3])
+    connect(servos, max_velocity=1e-4, max_acceleration=1e-3)
+    assert register(servos, GOAL_SPEED) == [1, 1, 1]
+    assert register(servos, ACCELERATION) == [1, 1, 1]
+
+
+def test_speed_and_acceleration_zero_are_never_sent():
+    servos = fake_servos_at([0.1, 0.2, 0.3])
+    bus = connect(servos, max_velocity=1e-6, max_acceleration=1e-6)
+    bus.enable_torque()
+    bus.write_angles([0.2, 0.3, 0.4])
+    bus.disable_torque()
+    sent_zero = [w for w in servos.writes if w[1] in (GOAL_SPEED, ACCELERATION) and w[2] == 0]
+    assert sent_zero == []
+
+
+# 100 rad/s is 65190 ticks/s and 1000 rad/s^2 is 6519 units: past what the STS registers hold.
+def test_a_limit_beyond_the_register_is_capped_at_the_largest_value_it_holds():
+    servos = fake_servos_at([0.1, 0.2, 0.3])
+    connect(servos, max_velocity=100.0, max_acceleration=1000.0)
+    assert register(servos, GOAL_SPEED) == [32767, 32767, 32767]
+    assert register(servos, ACCELERATION) == [254, 254, 254]

@@ -174,8 +174,13 @@ class FeetechBus:
     def _write_limits(self, torque_limit: float) -> None:
         """Write the motion and torque limits to every servo, in the model's units."""
         ticks_per_rad = self.model.ticks_per_rev / (2 * np.pi)
-        speed = int(self.max_velocity * ticks_per_rad / self.model.speed_unit)
-        acceleration = int(self.max_acceleration * ticks_per_rad / self.model.acceleration_unit)
+        speed = _register_value(
+            self.max_velocity * ticks_per_rad / self.model.speed_unit, self.model.max_speed
+        )
+        acceleration = _register_value(
+            self.max_acceleration * ticks_per_rad / self.model.acceleration_unit,
+            self.model.max_acceleration,
+        )
         torque = round(torque_limit * self.model.full_torque_limit)
         for servo_id in self._ids:
             self._write(servo_id, _GOAL_SPEED, speed)
@@ -193,3 +198,13 @@ class FeetechBus:
 
     def _write(self, servo_id: int, register: tuple[int, int], value: int) -> None:
         self._port.write(servo_id, register[0], register[1], value)
+
+
+def _register_value(units: float, largest: int) -> int:
+    """A speed or acceleration in register units, rounded down and kept in [1, largest].
+
+    Never 0: on the HLS a speed of 0 stops the servo, while on the STS it is believed
+    to mean no limit at all (ADR 0004). Above `largest` the register can't hold it,
+    so the servo runs at its own maximum.
+    """
+    return min(max(int(units), 1), largest)
