@@ -105,3 +105,32 @@ def test_simulated_time_cannot_run_backwards_or_jump_by_an_unusable_step(dt):
     bus = sim_bus()
     with pytest.raises(ValueError, match="dt"):
         bus.advance(dt)
+
+
+def test_a_new_target_mid_move_respects_the_velocity_and_acceleration_limits():
+    bus = sim_bus()
+    bus.write_angles([1.0, 0.0, 0.0])
+    bus.advance(0.3)  # 0.3 s at 10 rad/s^2: 3 rad/s, at 0.45 rad
+    bus.write_angles([0.0, 0.0, 0.0])
+    step = 0.01
+    samples = [bus.read_angles()[0]]
+    for _ in range(200):
+        bus.advance(step)
+        samples.append(bus.read_angles()[0])
+    # Stopping from 3 rad/s takes 3^2 / (2 * 10) = 0.45 rad, so it peaks at 0.9 rad.
+    assert max(samples) == pytest.approx(0.9, abs=RAD_PER_TICK)
+    speeds = np.abs(np.diff(samples)) / step
+    assert speeds.max() <= MAX_VELOCITY + 2 * RAD_PER_TICK / step
+    assert reached(bus, [0.0, 0.0, 0.0])
+
+
+def test_any_sequence_of_targets_settles_on_the_last_one():
+    rng = np.random.default_rng(7)
+    for _ in range(200):
+        bus = sim_bus(rng.uniform(GEOM.joint_min, GEOM.joint_max, 3))
+        for _ in range(rng.integers(1, 6)):
+            target = rng.uniform(GEOM.joint_min, GEOM.joint_max, 3)
+            bus.write_angles(target)
+            bus.advance(rng.choice([0.0, 1e-9, rng.uniform(0.0, 0.5)]))
+        bus.advance(10.0)
+        assert reached(bus, target)

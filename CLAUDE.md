@@ -26,7 +26,7 @@ Small payload, no hard requirements: cheap and reproducible beats fast.
 - `src/dros/analysis.py`   - reachability, the target cylinder check, worst-case torque, tick error,
   workspace map data
 - `src/dros/viz.py`        - workspace plot (optional `viz` extra, matplotlib)
-- `src/dros/servo/`        - JointBus protocol and its safety checks, MockBus, STS3215 tick conversion
+- `src/dros/servo/`        - JointBus protocol and its safety checks, MockBus, SimBus, STS3215 tick conversion
 - `src/dros/sim/`          - digital twin (not started)
 - `tests/`                     - pytest; kinematics round-trip tests live here
 - `hw/`                        - scripts that touch real hardware (see safety rules)
@@ -46,7 +46,7 @@ Small payload, no hard requirements: cheap and reproducible beats fast.
   After such a change, use the `kinematics-reviewer` subagent.
 - **Hardware safety:** never run anything in `hw/`, or anything that opens a
   serial port, without asking me first and stating what will move and how far.
-  Develop against `MockBus` by default.
+  Develop against `MockBus` by default, or `SimBus` when motion over time matters.
 - Joint limits are defined in one place (`DeltaGeometry.check_joint_limits`).
   Every joint bus enforces them itself in `write_angles`, together with the
   torque-off refusal (ADR 0005, 0006). New buses must pass
