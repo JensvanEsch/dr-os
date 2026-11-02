@@ -50,3 +50,18 @@ def test_a_move_takes_the_time_its_velocity_and_acceleration_limits_imply(distan
     assert not reached(bus, target)
     bus.advance(0.05)
     assert reached(bus, target)
+
+
+def on_ticks(angles):
+    ticks = np.asarray(angles) / RAD_PER_TICK
+    return np.allclose(ticks, np.rint(ticks), rtol=0, atol=1e-9)
+
+
+def test_read_back_angles_are_rounded_to_ticks_at_rest_and_while_moving():
+    bus = sim_bus(start_angles=(0.1234567, 0.2345678, 0.3456789))
+    assert on_ticks(bus.read_angles())
+    bus.write_angles([0.7654321, 0.2345678, 0.1])
+    bus.advance(0.123)
+    assert on_ticks(bus.read_angles())
+    bus.advance(10.0)
+    assert on_ticks(bus.read_angles())

@@ -6,6 +6,7 @@ from numpy.typing import ArrayLike
 
 from ..geometry import DeltaGeometry
 from .bus import check_motion_limits, check_target
+from .sts3215 import rad_to_ticks, ticks_to_rad
 
 
 class SimBus:
@@ -29,12 +30,13 @@ class SimBus:
         self._torque_on = False
 
     def read_angles(self) -> np.ndarray:
-        return self._theta.copy()
+        return _on_ticks(self._theta)
 
     def write_angles(self, theta: np.ndarray) -> None:
         if not self._torque_on:
             raise RuntimeError("torque is off: turn it on before commanding the shoulders")
-        self._target = check_target(self.geom, theta).copy()
+        # Like a servo's goal position, the target is a whole number of ticks.
+        self._target = _on_ticks(check_target(self.geom, theta))
 
     def enable_torque(self) -> None:
         self._torque_on = True
@@ -56,6 +58,11 @@ class SimBus:
                 self.max_velocity,
                 self.max_acceleration,
             )
+
+
+def _on_ticks(theta: np.ndarray) -> np.ndarray:
+    """Round angles (rad) to the nearest tick, as a servo encoder reports them."""
+    return ticks_to_rad(rad_to_ticks(theta))
 
 
 # Below this, a distance (rad) or speed (rad/s) counts as zero.
