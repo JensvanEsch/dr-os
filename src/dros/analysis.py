@@ -395,13 +395,23 @@ class TorqueReport:
         return "\n".join(lines)
 
 
+def _extent(geom: DeltaGeometry) -> tuple[float, float]:
+    """How far from the z axis and from the shoulder plane the workspace can go (m)."""
+    depth = geom.upper_arm + geom.lower_arm
+    return geom.base_radius - geom.end_effector_radius + depth, depth
+
+
+def _clear_of_singularities(geom: DeltaGeometry, position: np.ndarray) -> bool:
+    """Whether a reachable position is at least SINGULARITY_LIMIT from a singularity."""
+    return singularity_margin(geom, inverse(geom, position)) >= SINGULARITY_LIMIT
+
+
 def _sweep_positions(geom: DeltaGeometry) -> np.ndarray:
     """Reachable positions (m, shape (N, 3)) sampled across the wedge of the workspace.
 
     Rings and layers are _SWEEP_SPACING apart. Around a ring only _SWEEP_ANGLES are taken.
     """
-    depth = geom.upper_arm + geom.lower_arm
-    reach = geom.base_radius - geom.end_effector_radius + depth
+    reach, depth = _extent(geom)
     radii = _SWEEP_SPACING * np.arange(1, ceil(reach / _SWEEP_SPACING) + 1)
     offsets = [(0.0, 0.0)]
     for r in radii:
@@ -434,8 +444,7 @@ def torque_report(
     left out the worst cases can sit against the limit and read 30% low or more.
     """
     reachable_positions = _sweep_positions(geom)
-    margins = [singularity_margin(geom, inverse(geom, p)) for p in reachable_positions]
-    positions = reachable_positions[np.array(margins) >= SINGULARITY_LIMIT]
+    positions = reachable_positions[[_clear_of_singularities(geom, p) for p in reachable_positions]]
     if len(positions) == 0:
         raise ValueError(f"the sweep found no usable workspace for {geom}")
     torques = [shoulder_torque(geom, p, load) for p in positions]
@@ -450,3 +459,75 @@ def torque_report(
         samples=len(positions),
         near_singular=len(reachable_positions) - len(positions),
     )
+
+
+# Grid spacing of the workspace map. Finer than the sweep so a plot reads smoothly.
+_MAP_SPACING = 0.0025  # m
+
+
+@dataclass(frozen=True)
+class WorkspaceSlice:
+    """One plane through the workspace, sampled on a square grid.
+
+    positions: the grid (m, shape (rows, cols, 3))
+    reachable: which positions the end-effector can reach (bool, shape (rows, cols))
+    torque:    largest accelerating torque of any shoulder (N m, shape (rows, cols)).
+               NaN where out of reach or within SINGULARITY_LIMIT of a singularity.
+    """
+
+    positions: np.ndarray
+    reachable: np.ndarray
+    torque: np.ndarray
+
+
+@dataclass(frozen=True)
+class WorkspaceMap:
+    """What a plot of the workspace shows.
+
+    side: the plane y = 0, along arm 0 (+x) and between arms 1 and 2 (-x)
+    top:  the plane z = cylinder.centre_z, through the middle of the target cylinder
+
+    The worst torque of torque_report can lie off both planes, so the largest torque
+    here can be lower.
+    """
+
+    load: Load
+    cylinder: CylinderCheck
+    side: WorkspaceSlice
+    top: WorkspaceSlice
+
+
+def _centred_grid(extent: float) -> np.ndarray:
+    """Coordinates _MAP_SPACING apart from -extent to extent (m), 0 included."""
+    steps = ceil(extent / _MAP_SPACING)
+    return _MAP_SPACING * np.arange(-steps, steps + 1)
+
+
+def _slice(geom: DeltaGeometry, load: Load, positions: np.ndarray) -> WorkspaceSlice:
+    """Reachability and largest shoulder torque at each of positions (m, shape (rows, cols, 3))."""
+    can_reach = reachable(geom, positions)
+    torque = np.full(can_reach.shape, np.nan)
+    for index in zip(*np.nonzero(can_reach)):
+        if _clear_of_singularities(geom, positions[index]):
+            torque[index] = shoulder_torque(geom, positions[index], load).accelerating.max()
+    return WorkspaceSlice(positions, can_reach, torque)
+
+
+def workspace_map(
+    geom: DeltaGeometry, load: Load, target: TargetCylinder = DEFAULT_TARGET
+) -> WorkspaceMap:
+    """Reachability and shoulder torque across a side and a top slice of the workspace.
+
+    The top slice goes through the target cylinder at its best placement. Takes about
+    15 s for the default geometry; plot the result with dros.viz.plot_workspace (needs
+    the viz extra).
+    """
+    reach, depth = _extent(geom)
+    across, heights = _centred_grid(reach), _centred_grid(depth)
+    cylinder = check_cylinder(geom, target)
+
+    x, z = np.meshgrid(across, heights)
+    side = np.stack([x, np.zeros_like(x), z], axis=-1)
+    x, y = np.meshgrid(across, across)
+    top = np.stack([x, y, np.full_like(x, cylinder.centre_z)], axis=-1)
+    return WorkspaceMap(load, cylinder, _slice(geom, load, side), _slice(geom, load, top))

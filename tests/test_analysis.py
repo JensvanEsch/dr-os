@@ -13,6 +13,7 @@ from dros.analysis import (
     Shortfall,
     TargetCylinder,
     TorqueReport,
+    WorkspaceMap,
     WorstTorque,
     check_cylinder,
     reachable,
@@ -20,6 +21,7 @@ from dros.analysis import (
     tick_error,
     torque_report,
     unreachable_cause,
+    workspace_map,
 )
 from dros.kinematics import singularity_margin
 from dros.servo import RAD_PER_TICK
@@ -507,3 +509,70 @@ def test_report_text_gives_torques_positions_and_tick_error(report):
     assert f"{report.accelerating.torque:.3f} N m" in text
     assert f"shoulder {report.static.shoulder}" in text
     assert f"{report.tick_error:.6f} m" in text
+
+
+def _nearest(positions: np.ndarray, position) -> tuple[int, int]:
+    """Grid index of the sample in positions (shape (rows, cols, 3)) nearest to position."""
+    distance = np.linalg.norm(positions - np.asarray(position), axis=-1)
+    return np.unravel_index(np.argmin(distance), distance.shape)
+
+
+STILL = Load(payload=0.4, end_effector_mass=0.2, upper_arm_mass=0.0, acceleration=0.0)
+
+
+@pytest.fixture(scope="module")
+def limited_map() -> WorkspaceMap:
+    return workspace_map(LIMITED, STILL, TargetCylinder(diameter=0.001, height=0.030))
+
+
+def test_side_view_reaches_the_centre_only_between_the_joint_limits(limited_map):
+    side = limited_map.side
+    assert np.all(side.positions[..., 1] == 0.0)
+    column = _nearest(side.positions, [0.0, 0.0, -0.08])[1]
+    z = side.positions[:, column, 2]
+    assert np.all(side.positions[:, column, 0] == 0.0)
+    inside = (z > -0.10 + 1e-9) & (z < -0.06 - 1e-9)
+    outside = (z < -0.10 - 1e-9) | (z > -0.06 + 1e-9)
+    assert side.reachable[inside, column].all()
+    assert not side.reachable[outside, column].any()
+    assert np.isnan(side.torque[outside, column]).all()
+
+
+def test_map_torque_matches_the_hand_calculation():
+    # As in test_static_torque_of_a_centred_end_effector_on_a_horizontal_upper_arm.
+    side = workspace_map(FLAT, STILL, TargetCylinder(diameter=0.001, height=0.010)).side
+    index = _nearest(side.positions, FLAT_POSITION)
+    assert np.allclose(side.positions[index], FLAT_POSITION)
+    assert side.torque[index] == pytest.approx(0.03924)
+
+
+# BOWL at half size, which keeps the grid small.
+SMALL_BOWL = replace(
+    BOWL, base_radius=0.030, end_effector_radius=0.0125, upper_arm=0.045, lower_arm=0.100
+)
+
+
+def test_top_view_cuts_the_middle_of_the_target_cylinder():
+    target = TargetCylinder(diameter=0.060, height=0.050)
+    workspace = workspace_map(SMALL_BOWL, TARGET_LOAD, target)
+    top = workspace.top
+    assert workspace.cylinder.passed
+    assert np.all(top.positions[..., 2] == workspace.cylinder.centre_z)
+    x, y = top.positions[..., 0], top.positions[..., 1]
+    inside = np.hypot(x, y) <= target.diameter / 2
+    assert top.reachable[inside].all()
+    assert not np.isnan(top.torque[inside]).any()
+    # Mirroring y swaps arms 1 and 2, which leaves the largest torque unchanged.
+    assert np.array_equal(top.reachable, top.reachable[::-1])
+    assert np.allclose(top.torque, top.torque[::-1], equal_nan=True)
+
+
+def test_map_leaves_out_torque_near_a_singularity_but_still_shows_the_reach():
+    target = TargetCylinder(diameter=0.001, height=0.010)
+    side = workspace_map(LOWER_ARMS_FLAT, TARGET_LOAD, target).side
+    near_singular = side.reachable & np.isnan(side.torque)
+    assert near_singular.any()
+    for index in zip(*np.nonzero(near_singular)):
+        theta = inverse(LOWER_ARMS_FLAT, side.positions[index])
+        assert singularity_margin(LOWER_ARMS_FLAT, theta) < SINGULARITY_LIMIT
+    assert np.nanmax(side.torque) < 100.0
