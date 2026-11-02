@@ -74,12 +74,6 @@ The low position the end-effector moves to before torque is turned off, so it is
 never dropped from height.
 _Avoid_: Park, home
 
-**First move**:
-The milestone run: from the rest position the end-effector goes 20 mm down in z
-and back, then torque turns off. The same run goes on the sim bus first and on
-real servos later.
-_Avoid_: Smoke test, hello world
-
 **Workspace**:
 Every position the end-effector can reach, given the arm lengths and joint
 limits.
