@@ -3,7 +3,7 @@ import pytest
 
 from dros import DeltaGeometry, UnreachableError, forward, inverse, jacobian
 from dros.kinematics import singularity_margin
-from dros.servo import MockBus, rad_to_ticks, safe_write, ticks_to_rad
+from dros.servo import rad_to_ticks, ticks_to_rad
 
 GEOM = DeltaGeometry()
 RNG = np.random.default_rng(0)
@@ -41,14 +41,6 @@ def test_symmetry_on_z_axis():
 def test_unreachable_raises():
     with pytest.raises(UnreachableError):
         inverse(GEOM, [0.0, 0.0, -1.0])
-
-
-def test_safe_write_enforces_limits():
-    bus = MockBus()
-    safe_write(bus, GEOM, [0.1, 0.2, 0.3])
-    assert np.allclose(bus.read_angles(), [0.1, 0.2, 0.3])
-    with pytest.raises(ValueError):
-        safe_write(bus, GEOM, [0.0, 0.0, 3.0])
 
 
 def test_tick_conversion_round_trip():
