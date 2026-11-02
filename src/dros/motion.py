@@ -90,6 +90,7 @@ def move_shoulder_angles(
     sleep: Callable[[float], None] = time.sleep,
     poll_interval: float = 0.01,
     tolerance: float = 0.002,
+    timeout: float = 10.0,
 ) -> None:
     """Move the shoulders to `theta` (rad) and wait until they have settled there.
 
@@ -98,12 +99,26 @@ def move_shoulder_angles(
     unchanged since the poll before. `tolerance` only has to cover how far the bus
     rounds a target; settling is what puts the shoulders on it. Pass a simulated
     clock's advance as `sleep` to run on virtual time.
+
+    Raises TimeoutError if the shoulders have not settled after `timeout` seconds of
+    polling, counted from the poll intervals so it works on virtual time too.
+
+    On any error the target stays sent and torque stays on, so the servos hold it:
+    turning torque off would drop the end-effector (ADR 0005). Errors here never
+    touch torque.
     """
     target = np.asarray(theta, dtype=float)
     set_shoulder_angles(bus, geom, target)
     before = bus.read_angles()
+    waited = 0.0
     while True:
+        if waited >= timeout:
+            raise TimeoutError(
+                f"the shoulders did not settle on {target} rad within {timeout} s, "
+                f"measured {before} rad; the target is held with torque on"
+            )
         sleep(poll_interval)
+        waited += poll_interval
         now = bus.read_angles()
         if np.array_equal(now, before) and np.all(np.abs(now - target) <= tolerance):
             return
@@ -118,12 +133,14 @@ def move_end_effector_position(
     sleep: Callable[[float], None] = time.sleep,
     poll_interval: float = 0.01,
     tolerance: float = 0.002,
+    timeout: float = 10.0,
 ) -> None:
     """Move the end-effector to `position` (m) and wait until the shoulders reach it.
 
     Inverse kinematics gives the shoulder angles; `move_shoulder_angles` sends and
-    waits for them, with `sleep`, `poll_interval` and `tolerance` passed on. Raises
-    UnreachableError before any bus command if the position is out of the workspace.
+    waits for them, with `sleep`, `poll_interval`, `tolerance` and `timeout` passed
+    on, and fails as it does. Raises UnreachableError before any bus command if the
+    position is out of the workspace.
     """
     move_shoulder_angles(
         bus,
@@ -132,4 +149,5 @@ def move_end_effector_position(
         sleep=sleep,
         poll_interval=poll_interval,
         tolerance=tolerance,
+        timeout=timeout,
     )

@@ -109,6 +109,49 @@ def test_starting_outside_the_joint_limits_stops_and_asks_to_reposition_by_hand(
     assert np.allclose(bus.read_angles(), start, rtol=0, atol=RAD_PER_TICK / 2)
 
 
+class SoftwareError(Exception):
+    pass
+
+
+def test_an_error_during_a_move_holds_the_last_target_with_torque_on():
+    bus = CallLogBus()
+    target = np.array(GEOM.rest_position)
+    polls = 0
+
+    def failing_sleep(dt):
+        nonlocal polls
+        polls += 1
+        if polls == 5:  # part of the way there
+            raise SoftwareError
+        bus.advance(dt)
+
+    with pytest.raises(SoftwareError):
+        move_end_effector_position(bus, GEOM, target, sleep=failing_sleep)
+    assert "disable_torque" not in bus.calls
+    assert np.linalg.norm(end_effector_position(bus) - target) > POSITION_TOLERANCE
+    # The servos carry on to the last target on their own and hold it there.
+    bus.advance(5.0)
+    assert np.linalg.norm(end_effector_position(bus) - target) <= POSITION_TOLERANCE
+
+
+def test_a_move_that_never_settles_times_out_and_holds_the_target_with_torque_on():
+    bus = CallLogBus()
+    target = np.array(GEOM.rest_position)
+    slept = 0.0
+
+    def jammed_sleep(dt):  # time passes, but the shoulders are stuck
+        nonlocal slept
+        slept += dt
+        assert slept < 1000.0, "the wait never gave up"
+
+    with pytest.raises(TimeoutError, match="torque on"):
+        move_end_effector_position(bus, GEOM, target, sleep=jammed_sleep, timeout=3.0)
+    assert slept == pytest.approx(3.0, abs=0.02)
+    assert "disable_torque" not in bus.calls
+    bus.advance(5.0)  # unjammed, the shoulders carry on to the target
+    assert np.linalg.norm(end_effector_position(bus) - target) <= POSITION_TOLERANCE
+
+
 def test_a_long_move_goes_out_as_one_joint_target():
     bus = RecordingBus()
     # From the shoulders at 0 rad to all three at about 1.17 rad.
