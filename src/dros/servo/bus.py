@@ -20,42 +20,23 @@ class JointBus(Protocol):
     def close(self) -> None: ...
 
 
-def check_motion_limits(
-    max_speed: float, max_acceleration: float, far_target_threshold: float
-) -> None:
-    """Raise ValueError unless every motion limit a bus is built with is positive and finite.
-
-    A NaN threshold would let every target through, because nothing compares as greater.
-    """
-    limits = {
-        "max_speed": max_speed,
-        "max_acceleration": max_acceleration,
-        "far_target_threshold": far_target_threshold,
-    }
-    for name, value in limits.items():
+def check_motion_limits(max_speed: float, max_acceleration: float) -> None:
+    """Raise ValueError unless the speed and acceleration limits are positive and finite."""
+    for name, value in {"max_speed": max_speed, "max_acceleration": max_acceleration}.items():
         if not (np.isfinite(value) and value > 0):
             raise ValueError(f"{name} must be positive and finite, got {value}")
 
 
-def check_target(
-    geom: DeltaGeometry, measured: np.ndarray, theta: ArrayLike, far_target_threshold: float
-) -> np.ndarray:
+def check_target(geom: DeltaGeometry, theta: ArrayLike) -> np.ndarray:
     """The safety checks every joint bus runs in `write_angles` before a target goes out.
 
-    Raises ValueError for a target that isn't three angles, one outside the joint
-    limits, or one where any shoulder is further than `far_target_threshold` (rad)
-    from its measured angle. Returns the target as a float array.
+    Raises ValueError for a target that isn't three angles or one outside the joint
+    limits. Returns the target as a float array.
     """
     theta = np.asarray(theta, dtype=float)
     if theta.shape != (3,):
         raise ValueError(f"a target is three shoulder angles, got shape {theta.shape}")
     geom.check_joint_limits(theta)
-    distance = np.max(np.abs(theta - np.asarray(measured, dtype=float)))
-    if distance > far_target_threshold:
-        raise ValueError(
-            f"target is {distance:.3f} rad from the measured angles, too far "
-            f"(threshold {far_target_threshold} rad); step towards it in smaller moves"
-        )
     return theta
 
 
@@ -72,14 +53,12 @@ class MockBus:
         *,
         max_speed: float,
         max_acceleration: float,
-        far_target_threshold: float,
         start_angles: ArrayLike = (0.0, 0.0, 0.0),
     ) -> None:
-        check_motion_limits(max_speed, max_acceleration, far_target_threshold)
+        check_motion_limits(max_speed, max_acceleration)
         self.geom = geom
         self.max_speed = max_speed
         self.max_acceleration = max_acceleration
-        self.far_target_threshold = far_target_threshold
         self._theta = np.asarray(start_angles, dtype=float).copy()
         self._torque_on = False
 
@@ -89,9 +68,7 @@ class MockBus:
     def write_angles(self, theta: np.ndarray) -> None:
         if not self._torque_on:
             raise RuntimeError("torque is off: turn it on before commanding the shoulders")
-        self._theta = check_target(
-            self.geom, self.read_angles(), theta, self.far_target_threshold
-        ).copy()
+        self._theta = check_target(self.geom, theta).copy()
 
     def enable_torque(self) -> None:
         self._torque_on = True

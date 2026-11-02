@@ -14,8 +14,7 @@ from dros import DeltaGeometry
 from dros.servo import RAD_PER_TICK, JointBus
 
 GEOM = DeltaGeometry()
-LIMITS = {"max_speed": 3.0, "max_acceleration": 10.0, "far_target_threshold": 0.2}
-FAR_TARGET_THRESHOLD = LIMITS["far_target_threshold"]  # rad
+LIMITS = {"max_speed": 3.0, "max_acceleration": 10.0}  # rad/s, rad/s^2
 # A bus may round what it reads back to one tick.
 READ_BACK_TOLERANCE = RAD_PER_TICK
 
@@ -28,11 +27,10 @@ class JointBusContract:
         *,
         max_speed: float,
         max_acceleration: float,
-        far_target_threshold: float,
     ) -> JointBus:
         """A bus with its shoulders at `start_angles` (rad) and torque off.
 
-        The limits are in rad/s, rad/s^2 and rad, passed on to the bus's constructor.
+        The limits are in rad/s and rad/s^2, passed on to the bus's constructor.
         """
         raise NotImplementedError
 
@@ -56,7 +54,7 @@ class JointBusContract:
         self.settle(bus)
         assert np.allclose(bus.read_angles(), [0.1, 0.2, 0.3], atol=READ_BACK_TOLERANCE)
 
-    # Each target is within the far-target threshold of its start, so only the limits refuse it.
+    # Each target is close to its start, so the refusal is about the limits alone.
     @pytest.mark.parametrize(
         "start, target",
         [
@@ -74,31 +72,17 @@ class JointBusContract:
         self.settle(bus)
         assert np.allclose(bus.read_angles(), start, atol=READ_BACK_TOLERANCE)
 
-    def test_a_target_further_than_the_threshold_from_the_measured_angles_is_refused(self):
-        bus = self.bus([0.1, 0.2, 0.3])
+    def test_a_far_target_within_the_limits_is_reached(self):
+        # The servo's own speed and acceleration limits make a far move safe (ADR 0006).
+        bus = self.bus([GEOM.joint_min, GEOM.joint_min, GEOM.joint_min])
         bus.enable_torque()
-        with pytest.raises(ValueError, match="far"):
-            bus.write_angles([0.1, 0.2 - (FAR_TARGET_THRESHOLD + 0.01), 0.3])
+        bus.write_angles([GEOM.joint_max, GEOM.joint_min, GEOM.joint_max])
         self.settle(bus)
-        assert np.allclose(bus.read_angles(), [0.1, 0.2, 0.3], atol=READ_BACK_TOLERANCE)
-
-    def test_a_target_just_inside_the_threshold_is_accepted(self):
-        bus = self.bus([0.1, 0.2, 0.3])
-        bus.enable_torque()
-        target = np.array([0.1, 0.2, 0.3]) + 0.99 * FAR_TARGET_THRESHOLD
-        bus.write_angles(target)
-        self.settle(bus)
-        assert np.allclose(bus.read_angles(), target, atol=READ_BACK_TOLERANCE)
-
-    def test_the_threshold_is_measured_from_where_the_shoulders_are(self):
-        # Stepping within the threshold is how long moves are made (ADR 0005).
-        bus = self.bus([0.1, 0.1, 0.1])
-        bus.enable_torque()
-        for step in range(1, 5):
-            target = np.full(3, 0.1 + step * 0.9 * FAR_TARGET_THRESHOLD)
-            bus.write_angles(target)
-            self.settle(bus)
-        assert np.allclose(bus.read_angles(), target, atol=READ_BACK_TOLERANCE)
+        assert np.allclose(
+            bus.read_angles(),
+            [GEOM.joint_max, GEOM.joint_min, GEOM.joint_max],
+            atol=READ_BACK_TOLERANCE,
+        )
 
     @pytest.mark.parametrize("target", [[0.2], [0.2, 0.3], [0.2, 0.3, 0.4, 0.5]])
     def test_a_target_without_three_angles_is_refused(self, target):
