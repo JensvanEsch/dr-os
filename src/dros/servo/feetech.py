@@ -97,7 +97,10 @@ HLS = FeetechModel(
 
 # Register addresses, believed shared by the STS and HLS families: (address, size).
 _TORQUE_ENABLE = (40, 1)
+_ACCELERATION = (41, 1)
 _GOAL_POSITION = (42, 2)
+_GOAL_SPEED = (46, 2)
+_TORQUE_LIMIT = (48, 2)
 _PRESENT_POSITION = (56, 2)
 
 
@@ -106,6 +109,11 @@ class FeetechBus:
 
     `servo_ids[i]` drives arm i. Angles are converted with the centre tick as zero
     and direction +1 until calibration exists.
+
+    On connect the bus writes max velocity (rad/s), max acceleration (rad/s^2) and
+    the torque limit to every servo, so the servos hold to them even if this
+    process stalls (ADR 0005). `torque_limit` is a fraction of the servo's full
+    torque, in (0, 1].
     """
 
     def __init__(
@@ -117,8 +125,11 @@ class FeetechBus:
         max_velocity: float,
         max_acceleration: float,
         servo_ids: Sequence[int] = (1, 2, 3),
+        torque_limit: float = 1.0,
     ) -> None:
         check_motion_limits(max_velocity, max_acceleration)
+        if not 0 < torque_limit <= 1:  # False for NaN
+            raise ValueError(f"torque_limit must be in (0, 1] of full torque, got {torque_limit}")
         if len(servo_ids) != 3:
             raise ValueError(f"a Feetech bus drives three shoulders, got IDs {servo_ids}")
         self.geom = geom
@@ -128,6 +139,7 @@ class FeetechBus:
         self._port = port
         self._ids = tuple(servo_ids)
         self._torque_on = False
+        self._write_limits(torque_limit)
 
     def read_angles(self) -> np.ndarray:
         return self._to_rad([self._read(i, _PRESENT_POSITION) for i in self._ids])
@@ -158,6 +170,17 @@ class FeetechBus:
 
     def close(self) -> None:
         self._port.close()
+
+    def _write_limits(self, torque_limit: float) -> None:
+        """Write the motion and torque limits to every servo, in the model's units."""
+        ticks_per_rad = self.model.ticks_per_rev / (2 * np.pi)
+        speed = int(self.max_velocity * ticks_per_rad / self.model.speed_unit)
+        acceleration = int(self.max_acceleration * ticks_per_rad / self.model.acceleration_unit)
+        torque = round(torque_limit * self.model.full_torque_limit)
+        for servo_id in self._ids:
+            self._write(servo_id, _GOAL_SPEED, speed)
+            self._write(servo_id, _ACCELERATION, acceleration)
+            self._write(servo_id, _TORQUE_LIMIT, torque)
 
     def _to_ticks(self, theta: ArrayLike) -> np.ndarray:
         return rad_to_ticks(theta, ticks_per_rev=self.model.ticks_per_rev)
