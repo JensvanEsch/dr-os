@@ -151,3 +151,31 @@ def move_end_effector_position(
         tolerance=tolerance,
         timeout=timeout,
     )
+
+
+def end_at_rest_position(
+    bus: JointBus,
+    geom: DeltaGeometry,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    poll_interval: float = 0.01,
+    tolerance: float = 0.002,
+    timeout: float = 10.0,
+) -> None:
+    """End a normal run: move to the rest position, then turn torque off.
+
+    Torque goes off only once the shoulders have settled at the rest position, so the
+    end-effector is never dropped from height. If the move there fails, torque stays
+    on and the target is held, as in `move_end_effector_position`, whose keyword
+    arguments this takes.
+    """
+    move_end_effector_position(
+        bus,
+        geom,
+        geom.rest_position,
+        sleep=sleep,
+        poll_interval=poll_interval,
+        tolerance=tolerance,
+        timeout=timeout,
+    )
+    bus.disable_torque()

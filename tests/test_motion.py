@@ -6,6 +6,7 @@ import pytest
 from dros import DeltaGeometry, UnreachableError, forward, inverse
 from dros.motion import (
     ShoulderOutsideLimitsError,
+    end_at_rest_position,
     move_end_effector_position,
     move_shoulder_angles,
     set_end_effector_position,
@@ -37,11 +38,16 @@ class RecordingBus(SimBus):
         self.enable_torque()
         self.targets = []
         self.positions_at_write = []
+        self.positions_at_torque_off = []
 
     def write_angles(self, theta):
         self.targets.append(np.array(theta))
         self.positions_at_write.append(end_effector_position(self))
         super().write_angles(theta)
+
+    def disable_torque(self):
+        self.positions_at_torque_off.append(end_effector_position(self))
+        super().disable_torque()
 
 
 class CallLogBus(SimBus):
@@ -134,6 +140,29 @@ def test_an_error_during_a_move_holds_the_last_target_with_torque_on():
     assert np.linalg.norm(end_effector_position(bus) - target) <= POSITION_TOLERANCE
 
 
+def test_ending_at_the_rest_position_turns_torque_off_only_once_it_is_there():
+    bus = RecordingBus()
+    move_end_effector_position(bus, GEOM, [0.03, -0.02, -0.22], sleep=bus.advance)
+
+    end_at_rest_position(bus, GEOM, sleep=bus.advance)
+
+    [at_torque_off] = bus.positions_at_torque_off
+    assert np.linalg.norm(at_torque_off - GEOM.rest_position) <= POSITION_TOLERANCE
+    with pytest.raises(RuntimeError, match="torque is off"):
+        bus.write_angles(bus.read_angles())
+
+
+def test_a_failed_move_to_the_rest_position_leaves_torque_on():
+    bus = CallLogBus()
+
+    def jammed_sleep(dt):
+        pass
+
+    with pytest.raises(TimeoutError):
+        end_at_rest_position(bus, GEOM, sleep=jammed_sleep, timeout=1.0)
+    assert "disable_torque" not in bus.calls
+
+
 def test_a_move_that_never_settles_times_out_and_holds_the_target_with_torque_on():
     bus = CallLogBus()
     target = np.array(GEOM.rest_position)
@@ -179,9 +208,9 @@ def test_a_run_of_20_mm_down_from_rest_and_back_ends_at_rest_with_torque_off():
     bus = RecordingBus()
     rest = np.array(GEOM.rest_position)
     down = rest - [0.0, 0.0, 0.020]
-    for target in (rest, down, rest):
+    for target in (rest, down):
         move_end_effector_position(bus, GEOM, target, sleep=bus.advance)
-    bus.disable_torque()
+    end_at_rest_position(bus, GEOM, sleep=bus.advance)
 
     commanded = np.array([forward(GEOM, t) for t in bus.targets])
     assert np.allclose(commanded, [rest, down, rest], rtol=0, atol=1e-9)
