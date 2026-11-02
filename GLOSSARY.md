@@ -101,6 +101,16 @@ acceleration. Compared with a servo's continuous torque through the margin.
 **Margin**:
 A servo's continuous torque set against the worst shoulder torque required.
 
+**Jacobian**:
+How the end-effector moves per radian of each shoulder (dp/dθ, a 3×3 matrix).
+
+**Singularity**:
+A position where the lower arms are coplanar, or an upper arm is in line with its
+lower arm. Shoulder torque grows without bound near one.
+
+**Tick error**:
+The largest position error at a position from rounding each shoulder to a tick.
+
 **Forward (kinematics)**:
 The map from the three shoulder angles (θ) to the end-effector position. Three
 angles allow two positions; it returns the lower one, and a position that only

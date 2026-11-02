@@ -2,26 +2,27 @@ import numpy as np
 import pytest
 
 from dros import DeltaGeometry, UnreachableError, forward, inverse, jacobian
+from dros.kinematics import singularity_margin
 from dros.servo import MockBus, rad_to_ticks, safe_write, ticks_to_rad
 
 GEOM = DeltaGeometry()
 RNG = np.random.default_rng(0)
 
 
-def test_home_is_centred_below_base():
+def test_zero_angles_are_centred_below_base():
     p = forward(GEOM, np.zeros(3))
     assert abs(p[0]) < 1e-12 and abs(p[1]) < 1e-12
     assert p[2] < 0
 
 
-def test_ik_fk_round_trip_joint_space():
+def test_round_trip_from_joint_angles():
     for _ in range(2000):
         theta = RNG.uniform(-0.3, 1.0, size=3)
         p = forward(GEOM, theta)
         assert np.allclose(inverse(GEOM, p), theta, atol=1e-9)
 
 
-def test_fk_ik_round_trip_cartesian():
+def test_round_trip_from_positions():
     z0 = forward(GEOM, np.full(3, 0.4))[2]
     for _ in range(2000):
         p = np.array([*RNG.uniform(-0.04, 0.04, size=2), z0 + RNG.uniform(-0.03, 0.03)])
@@ -78,3 +79,24 @@ def test_jacobian_of_a_centred_end_effector_by_hand():
     #   dx = -0.01, dy = 0, dz = -1/150
     geom = DeltaGeometry(base_radius=0.08, end_effector_radius=0.02, upper_arm=0.02, lower_arm=0.10)
     assert np.allclose(jacobian(geom, np.zeros(3))[:, 0], [-0.01, 0.0, -1.0 / 150.0])
+
+
+def test_singularity_margin_of_a_centred_end_effector_by_hand():
+    # Lower arm along (-0.8, 0, -0.6) and elbow moving along (0, 0, -1): the two are at
+    # cosine 0.6. The unit lower arms span more than that, |det| = 0.8^2 0.6 3 sqrt(3) / 2.
+    geom = DeltaGeometry(base_radius=0.08, end_effector_radius=0.02, upper_arm=0.02, lower_arm=0.10)
+    assert singularity_margin(geom, np.zeros(3)) == pytest.approx(0.6)
+
+
+def test_singularity_margin_closes_when_the_lower_arms_lie_flat():
+    # Upper arm 0.05 at theta = -pi/2 + 0, elbow straight above the shoulder: with the
+    # shoulder offset equal to the lower arm the end-effector centre sits level with it.
+    geom = DeltaGeometry(base_radius=0.12, end_effector_radius=0.02, upper_arm=0.05, lower_arm=0.10)
+    assert singularity_margin(geom, np.full(3, -np.pi / 2)) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_singularity_margin_closes_when_upper_and_lower_arm_are_in_line():
+    # Upper arm 0.04, lower arm 0.06, shoulder offset 0.06: straight along a line to z = -0.08.
+    geom = DeltaGeometry(base_radius=0.08, end_effector_radius=0.02, upper_arm=0.04, lower_arm=0.06)
+    theta = inverse(geom, [0.0, 0.0, -0.08 + 1e-9])
+    assert singularity_margin(geom, theta) == pytest.approx(0.0, abs=1e-2)

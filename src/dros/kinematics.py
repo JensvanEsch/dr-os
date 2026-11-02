@@ -96,6 +96,16 @@ def forward(geom: DeltaGeometry, theta) -> np.ndarray:
     return a if a[2] < b[2] else b
 
 
+def _lower_arms_and_elbow_rates(
+    geom: DeltaGeometry, theta: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Lower arms, wrist minus elbow (m), and elbow velocities (m/rad), one row per arm."""
+    lower_arms = forward(geom, theta) - _elbows_shifted(geom, theta)
+    s, c = geom.upper_arm * np.sin(theta), geom.upper_arm * np.cos(theta)
+    phi = geom.arm_angles
+    return lower_arms, np.column_stack([-s * np.cos(phi), -s * np.sin(phi), -c])
+
+
 def jacobian(geom: DeltaGeometry, theta) -> np.ndarray:
     """dp/dtheta (m/rad, shape (3, 3)) at joint angles theta (rad), for forward's position.
 
@@ -104,9 +114,20 @@ def jacobian(geom: DeltaGeometry, theta) -> np.ndarray:
     velocity. Raises numpy.linalg.LinAlgError if the three lower arms are coplanar.
     """
     theta = np.asarray(theta, dtype=float)
-    p = forward(geom, theta)
-    lower_arms = p - _elbows_shifted(geom, theta)
-    s, c = geom.upper_arm * np.sin(theta), geom.upper_arm * np.cos(theta)
-    phi = geom.arm_angles
-    elbow_rates = np.column_stack([-s * np.cos(phi), -s * np.sin(phi), -c])
+    lower_arms, elbow_rates = _lower_arms_and_elbow_rates(geom, theta)
     return np.linalg.solve(lower_arms, np.diag(np.sum(lower_arms * elbow_rates, axis=1)))
+
+
+def singularity_margin(geom: DeltaGeometry, theta) -> float:
+    """How far joint angles theta (rad) are from a singularity: 0 is on one, 1 is far off.
+
+    The smaller of two measures. The lower arms lose their grip on the end-effector when
+    they become coplanar, so torque grows without bound: |det| of the unit lower arms.
+    An upper arm in line with its lower arm can no longer move the wrist along the lower
+    arm, so its angular acceleration grows without bound: the sine between the two.
+    """
+    theta = np.asarray(theta, dtype=float)
+    lower_arms, elbow_rates = _lower_arms_and_elbow_rates(geom, theta)
+    coplanar = abs(np.linalg.det(lower_arms / geom.lower_arm))
+    in_line = np.abs(np.sum(lower_arms * elbow_rates, axis=1)) / (geom.upper_arm * geom.lower_arm)
+    return float(min(coplanar, in_line.min()))

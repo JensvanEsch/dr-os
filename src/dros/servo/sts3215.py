@@ -9,6 +9,7 @@ import numpy as np
 
 TICKS_PER_REV = 4096
 CENTER_TICK = 2048
+RAD_PER_TICK = 2 * np.pi / TICKS_PER_REV
 
 
 def rad_to_ticks(theta, zero_tick: int = CENTER_TICK, direction: int = 1) -> np.ndarray:

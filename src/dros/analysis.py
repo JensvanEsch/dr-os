@@ -10,8 +10,8 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from .geometry import DeltaGeometry
-from .kinematics import UnreachableError, forward, inverse, jacobian
-from .servo import ticks_to_rad
+from .kinematics import UnreachableError, forward, inverse, jacobian, singularity_margin
+from .servo import RAD_PER_TICK
 
 # How densely a target cylinder is sampled. Rings are a fixed distance apart because
 # joint_min leaves small round holes in the workspace that wider rings can step over.
@@ -22,12 +22,18 @@ _RING_SPACING = 0.010  # m
 _RING_ANGLES = np.deg2rad(np.arange(0.0, 360.0, 15.0))
 
 GRAVITY = 9.81  # m/s^2
-TICK_SIZE = float(ticks_to_rad(1, zero_tick=0))  # rad, one encoder tick
+
 # The sweep for worst cases. Arms sit 120 deg apart and each mirrors the workspace, so the
 # 60 deg wedge with all three shoulders stands in for the rest.
 _SWEEP_SPACING = 0.005  # m
 _SWEEP_ANGLES = np.deg2rad(np.arange(0.0, 61.0, 15.0))
-_ROUNDING = 0.5 * np.array(list(product([-1.0, 1.0], repeat=3)))  # in ticks, the corners
+
+# Below this singularity_margin the sweep leaves a position out. Torque grows without bound
+# there, so a sampled maximum would only say how close a sample happened to land.
+SINGULARITY_LIMIT = 0.1
+
+# Each shoulder can be half a tick off. Position error is largest at a corner of that cube.
+_ROUNDING_CORNERS = 0.5 * np.array(list(product([-1.0, 1.0], repeat=3)))
 
 
 class Cause(Enum):
@@ -246,10 +252,20 @@ class ShoulderTorque:
     accelerating: np.ndarray
 
 
-def _check_reachable(geom: DeltaGeometry, position: np.ndarray) -> None:
+def _jacobians(
+    geom: DeltaGeometry, position: ArrayLike
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Theta, the jacobian and its inverse at position (m). Raises UnreachableError."""
+    position = np.asarray(position, dtype=float)
     cause = unreachable_cause(geom, position)
     if cause is not None:
         raise UnreachableError(f"{position} is out of reach: {cause.value}")
+    theta = inverse(geom, position)
+    try:
+        jac = jacobian(geom, theta)
+        return theta, jac, np.linalg.inv(jac)
+    except np.linalg.LinAlgError:
+        raise UnreachableError(f"{position} is a singular position") from None
 
 
 def shoulder_torque(geom: DeltaGeometry, position: ArrayLike, load: Load) -> ShoulderTorque:
@@ -257,37 +273,33 @@ def shoulder_torque(geom: DeltaGeometry, position: ArrayLike, load: Load) -> Sho
 
     Raises UnreachableError if the end-effector cannot reach position.
     """
-    position = np.asarray(position, dtype=float)
-    _check_reachable(geom, position)
-    theta = inverse(geom, position)
-    try:
-        moves = jacobian(geom, theta)
-        rates = np.linalg.inv(moves)
-    except np.linalg.LinAlgError:
-        raise UnreachableError(f"{position} is a singular position") from None
+    theta, jac, jac_inverse = _jacobians(geom, position)
 
     # Virtual work: the shoulders lift and accelerate the end-effector and upper arms.
     # Torques that depend on speed are left out, so this holds from rest.
     mass = load.payload + load.end_effector_mass
     upper_arm_weight = load.upper_arm_mass * GRAVITY * geom.upper_arm / 2.0 * np.cos(theta)
-    static = np.abs(mass * GRAVITY * moves[2] - upper_arm_weight)
-    inertia = load.upper_arm_mass * geom.upper_arm**2 / 3.0  # uniform rod about its end
-    per_acceleration = np.linalg.norm(mass * moves.T + inertia * rates, axis=1)
-    return ShoulderTorque(static, static + load.acceleration * per_acceleration)
+    static = np.abs(mass * GRAVITY * jac[2] - upper_arm_weight)
+    inertia = load.upper_arm_mass * geom.upper_arm**2 / 3.0  # uniform, about the shoulder
+    per_unit_acceleration = np.linalg.norm(mass * jac.T + inertia * jac_inverse, axis=1)
+    return ShoulderTorque(static, static + load.acceleration * per_unit_acceleration)
 
 
 def tick_error(
-    geom: DeltaGeometry, position: ArrayLike, joint_resolution: float = TICK_SIZE
+    geom: DeltaGeometry, position: ArrayLike, joint_resolution: float = RAD_PER_TICK
 ) -> float:
     """Largest position error (m) at position from rounding each shoulder to a tick.
 
     joint_resolution is the size of one tick (rad), and each shoulder can be half of one
     off. Raises UnreachableError if the end-effector cannot reach position.
     """
-    position = np.asarray(position, dtype=float)
-    _check_reachable(geom, position)
-    moves = jacobian(geom, inverse(geom, position))
-    return float(np.linalg.norm(moves @ (joint_resolution * _ROUNDING).T, axis=0).max())
+    _, jac, _ = _jacobians(geom, position)
+    return float(np.linalg.norm(jac @ (joint_resolution * _ROUNDING_CORNERS).T, axis=0).max())
+
+
+def _format_position(position: tuple[float, float, float]) -> str:
+    x, y, z = position
+    return f"({x:.3f}, {y:.3f}, {z:.3f}) m"
 
 
 @dataclass(frozen=True)
@@ -339,22 +351,22 @@ class WorstTorque:
         return TorqueMargin(self.torque, continuous_torque)
 
     def __str__(self) -> str:
-        x, y, z = self.position
-        return (
-            f"{self.torque:.3f} N m on shoulder {self.shoulder}, "
-            f"end-effector at ({x:.3f}, {y:.3f}, {z:.3f}) m"
-        )
+        where = _format_position(self.position)
+        return f"{self.torque:.3f} N m on shoulder {self.shoulder}, end-effector at {where}"
 
 
 @dataclass(frozen=True)
 class TorqueReport:
-    """Worst cases over the workspace, sampled every _SWEEP_SPACING.
+    """Worst cases over the sampled workspace.
 
     static, accelerating: worst shoulder torques, each with its own position
     tick_error:           worst position error from rounding to ticks (m)
     tick_error_position:  where that occurs (m)
     joint_resolution:     the tick size used (rad)
-    samples:              number of reachable positions sampled
+    samples:              number of reachable positions the worst cases come from
+    near_singular:        number of reachable positions left out for being within
+                          SINGULARITY_LIMIT of a singularity. If not 0, the workspace
+                          holds positions the robot should not be sent to.
     """
 
     load: Load
@@ -364,61 +376,73 @@ class TorqueReport:
     tick_error_position: tuple[float, float, float]
     joint_resolution: float
     samples: int
+    near_singular: int
 
     def __str__(self) -> str:
-        x, y, z = self.tick_error_position
-        error = f"{self.tick_error * 1e3:.3f} mm at {self.joint_resolution:.5f} rad per tick"
-        return "\n".join(
-            [
-                f"Over {self.samples} sampled positions:",
-                f"  static: {self.static}",
-                f"  at {self.load.acceleration:.1f} m/s^2: {self.accelerating}",
-                f"  tick error: {error}, end-effector at ({x:.3f}, {y:.3f}, {z:.3f}) m",
-            ]
-        )
+        error = f"{self.tick_error:.6f} m at {self.joint_resolution:.5f} rad per tick"
+        where = _format_position(self.tick_error_position)
+        lines = [
+            f"Over {self.samples} sampled positions:",
+            f"  static: {self.static}",
+            f"  at {self.load.acceleration:.1f} m/s^2: {self.accelerating}",
+            f"  tick error: {error}, end-effector at {where}",
+        ]
+        if self.near_singular:
+            lines.append(f"  left out {self.near_singular} positions near a singularity")
+        return "\n".join(lines)
 
 
 def _sweep_positions(geom: DeltaGeometry) -> np.ndarray:
-    """Reachable positions (m, shape (N, 3)) sampled across the wedge of the workspace."""
+    """Reachable positions (m, shape (N, 3)) sampled across the wedge of the workspace.
+
+    Rings and layers are _SWEEP_SPACING apart. Around a ring only _SWEEP_ANGLES are taken.
+    """
     depth = geom.upper_arm + geom.lower_arm
     reach = geom.base_radius - geom.end_effector_radius + depth
     radii = _SWEEP_SPACING * np.arange(1, ceil(reach / _SWEEP_SPACING) + 1)
     offsets = [(0.0, 0.0)]
     for r in radii:
         offsets.extend(zip(r * np.cos(_SWEEP_ANGLES), r * np.sin(_SWEEP_ANGLES)))
-    layers = -_SWEEP_SPACING * np.arange(ceil(depth / _SWEEP_SPACING) + 1)
+    top = ceil(depth / _SWEEP_SPACING)
+    layers = _SWEEP_SPACING * np.arange(-top, top + 1)
     positions = np.array([(x, y, z) for z in layers for x, y in offsets])
     return positions[reachable(geom, positions)]
+
+
+def _as_tuple(position: np.ndarray) -> tuple[float, float, float]:
+    x, y, z = position
+    return float(x), float(y), float(z)
 
 
 def _worst(torques: np.ndarray, positions: np.ndarray) -> WorstTorque:
     """Largest entry of torques (shape (N, 3)), with positions (shape (N, 3)) alongside."""
     sample, shoulder = np.unravel_index(np.argmax(torques), torques.shape)
-    x, y, z = positions[sample]
-    position = (float(x), float(y), float(z))
-    return WorstTorque(float(torques[sample, shoulder]), position, int(shoulder))
+    return WorstTorque(float(torques[sample, shoulder]), _as_tuple(positions[sample]), int(shoulder))
 
 
 def torque_report(
-    geom: DeltaGeometry, load: Load, joint_resolution: float = TICK_SIZE
+    geom: DeltaGeometry, load: Load, joint_resolution: float = RAD_PER_TICK
 ) -> TorqueReport:
     """Find the worst shoulder torque and tick error across the workspace of geom.
 
-    Raises ValueError if the sweep finds no reachable position. A worst case that falls
-    between samples is missed, so treat the numbers as good to a few percent.
+    Positions near a singularity are left out and counted. Raises ValueError if the sweep
+    finds nothing else. A worst case that falls between samples is missed, so treat the
+    numbers as good to a few percent.
     """
-    positions = _sweep_positions(geom)
+    reachable_positions = _sweep_positions(geom)
+    margins = [singularity_margin(geom, inverse(geom, p)) for p in reachable_positions]
+    positions = reachable_positions[np.array(margins) >= SINGULARITY_LIMIT]
     if len(positions) == 0:
-        raise ValueError(f"the sweep found no workspace for {geom}")
+        raise ValueError(f"the sweep found no usable workspace for {geom}")
     torques = [shoulder_torque(geom, p, load) for p in positions]
     errors = np.array([tick_error(geom, p, joint_resolution) for p in positions])
-    x, y, z = positions[np.argmax(errors)]
     return TorqueReport(
         load=load,
         static=_worst(np.array([t.static for t in torques]), positions),
         accelerating=_worst(np.array([t.accelerating for t in torques]), positions),
         tick_error=float(errors.max()),
-        tick_error_position=(float(x), float(y), float(z)),
+        tick_error_position=_as_tuple(positions[np.argmax(errors)]),
         joint_resolution=joint_resolution,
         samples=len(positions),
+        near_singular=len(reachable_positions) - len(positions),
     )

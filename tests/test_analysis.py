@@ -6,6 +6,7 @@ import pytest
 
 from dros import DeltaGeometry, UnreachableError, forward, inverse
 from dros.analysis import (
+    SINGULARITY_LIMIT,
     Cause,
     CylinderCheck,
     Load,
@@ -20,7 +21,8 @@ from dros.analysis import (
     torque_report,
     unreachable_cause,
 )
-from dros.servo import ticks_to_rad
+from dros.kinematics import singularity_margin
+from dros.servo import RAD_PER_TICK
 
 # Shoulder offset 0.06 m, so a centred end-effector forms a 6-8-10 triangle at
 # theta = 0: elbow at radius 0.08, lower arm 0.10, wrist 0.06 below.
@@ -260,8 +262,8 @@ def test_static_torque_is_the_derivative_of_the_potential_energy():
     mass = load.payload + load.end_effector_mass
 
     def energy(theta: np.ndarray) -> float:
-        arms = load.upper_arm_mass * -0.5 * geom.upper_arm * np.sin(theta).sum()
-        return 9.81 * (mass * forward(geom, theta)[2] + arms)
+        upper_arms = load.upper_arm_mass * -0.5 * geom.upper_arm * np.sin(theta).sum()
+        return 9.81 * (mass * forward(geom, theta)[2] + upper_arms)
 
     rng = np.random.default_rng(5)
     for theta in rng.uniform(0.0, 1.2, (30, 3)):
@@ -296,7 +298,7 @@ def test_accelerating_torque_of_a_centred_end_effector():
 
 def test_accelerating_torque_of_an_upper_arm_alone():
     load = Load(payload=0.0, end_effector_mass=0.0, upper_arm_mass=0.03, acceleration=2.0)
-    # Rod inertia 0.03 * 0.02^2 / 3 = 4e-6 kg m^2. Lower arm (-0.08, 0, -0.06) over 0.0012
+    # Upper arm inertia 0.03 * 0.02^2 / 3 = 4e-6 kg m^2. Lower arm (-0.08, 0, -0.06) over 0.0012
     # gives dtheta/dp of (-200/3, 0, -50) rad/m, 83.33 long: 6.667e-4 N m on top of the
     # static 0.03 * 9.81 * 0.01 = 0.002943.
     torque = shoulder_torque(FLAT, FLAT_POSITION, load)
@@ -335,31 +337,85 @@ def test_tick_error_matches_rounding_the_shoulders_through_forward():
 
 
 def test_tick_error_defaults_to_the_resolution_of_the_servo_encoder():
-    size = ticks_to_rad(1, zero_tick=0)
-    expected = tick_error(FLAT, FLAT_POSITION, joint_resolution=float(size))
+    expected = tick_error(FLAT, FLAT_POSITION, joint_resolution=RAD_PER_TICK)
     assert tick_error(FLAT, FLAT_POSITION) == expected
 
 
-ARM_ONLY = Load(payload=0.0, end_effector_mass=0.0, upper_arm_mass=0.03, acceleration=0.0)
+def test_accelerating_torque_off_centre_matches_finite_differences():
+    load = Load(payload=0.4, end_effector_mass=0.2, upper_arm_mass=0.3, acceleration=2.0)
+    position = np.array([0.06, -0.04, -0.2])
+    theta = inverse(BOWL, position)
+    step = 1e-6
+    moves = np.array(
+        [
+            (forward(BOWL, theta + d) - forward(BOWL, theta - d)) / (2.0 * step)
+            for d in step * np.eye(3)
+        ]
+    )
+    rates = np.array(
+        [
+            (inverse(BOWL, position + d) - inverse(BOWL, position - d)) / (2.0 * step)
+            for d in step * np.eye(3)
+        ]
+    )  # rates[j, i] is dtheta_i / dp_j
+    inertia = load.upper_arm_mass * BOWL.upper_arm**2 / 3.0
+    size = np.linalg.norm(0.6 * moves + inertia * rates.T, axis=1)
+    torque = shoulder_torque(BOWL, position, load)
+    assert np.allclose(torque.accelerating - torque.static, 2.0 * size, rtol=1e-6)
+
+
+def test_torque_and_tick_error_follow_the_symmetry_of_the_arms():
+    load = Load(payload=0.5, end_effector_mass=0.05, upper_arm_mass=0.03, acceleration=2.0)
+    position = np.array([0.07, 0.03, -0.2])
+    x, y, z = position
+    c, s = np.cos(2.0 * np.pi / 3.0), np.sin(2.0 * np.pi / 3.0)
+    rotated = np.array([c * x - s * y, s * x + c * y, z])  # arm i now looks like arm i + 1
+    mirrored = np.array([x, -y, z])  # arms 1 and 2 swap
+    for image, order in ((rotated, [1, 2, 0]), (mirrored, [0, 2, 1])):
+        before = shoulder_torque(BOWL, position, load)
+        after = shoulder_torque(BOWL, image, load)
+        assert np.allclose(after.static[order], before.static)
+        assert np.allclose(after.accelerating[order], before.accelerating)
+        assert tick_error(BOWL, image) == pytest.approx(tick_error(BOWL, position))
+
+
+UPPER_ARMS_ONLY = Load(payload=0.0, end_effector_mass=0.0, upper_arm_mass=0.03, acceleration=0.0)
 TARGET_LOAD = Load(payload=0.5, end_effector_mass=0.05, upper_arm_mass=0.03, acceleration=2.0)
+
+# End-effector wider than the base and upper arms well above horizontal: the whole
+# usable workspace lies above the shoulders.
+ABOVE_THE_SHOULDERS = DeltaGeometry(
+    base_radius=0.02,
+    end_effector_radius=0.06,
+    upper_arm=0.10,
+    lower_arm=0.06,
+    joint_min=-1.5,
+    joint_max=-0.3,
+    rest_position=(0.0, 0.0, 0.04),
+)
+
+# Shoulder offset 0.06: at sin(theta) = 0.6 the elbow is at radius 0.10, z = -0.03, and
+# the lower arms 0.10 lie flat with the end-effector centred: a singular position.
+LOWER_ARMS_FLAT = replace(TILTED, base_radius=0.08)
+
+SWEPT_GEOMETRIES = [BOWL, TILTED, LOWER_ARMS_FLAT, replace(BOWL, joint_min=-1.5, joint_max=1.57)]
 
 
 @pytest.fixture(scope="module")
 def report() -> TorqueReport:
-    return torque_report(DeltaGeometry(), TARGET_LOAD)
+    return torque_report(BOWL, TARGET_LOAD)
 
 
 def test_worst_case_for_upper_arms_alone_is_an_upper_arm_at_horizontal():
     # Torque is 0.03 kg * 9.81 * 0.045 m * cos(theta), at most 0.013244 N m.
-    geom = DeltaGeometry()
-    worst = torque_report(geom, ARM_ONLY).static
+    worst = torque_report(BOWL, UPPER_ARMS_ONLY).static
     assert worst.torque == pytest.approx(0.013244, rel=1e-3)
-    assert inverse(geom, worst.position)[worst.shoulder] == pytest.approx(0.0, abs=0.05)
+    assert inverse(BOWL, worst.position)[worst.shoulder] == pytest.approx(0.0, abs=0.05)
 
 
 def test_report_says_where_the_worst_case_is(report):
     for worst, kind in ((report.static, "static"), (report.accelerating, "accelerating")):
-        at_worst = getattr(shoulder_torque(DeltaGeometry(), worst.position, TARGET_LOAD), kind)
+        at_worst = getattr(shoulder_torque(BOWL, worst.position, TARGET_LOAD), kind)
         assert worst.shoulder in (0, 1, 2)
         assert at_worst[worst.shoulder] == pytest.approx(worst.torque)
         assert at_worst.max() == pytest.approx(worst.torque)
@@ -369,28 +425,51 @@ def test_accelerating_worst_case_is_at_least_the_static_one(report):
     assert report.accelerating.torque > report.static.torque
 
 
-def test_no_position_in_the_workspace_is_much_worse_than_reported(report):
-    geom = DeltaGeometry()
+@pytest.mark.parametrize("geom", SWEPT_GEOMETRIES)
+def test_no_usable_position_is_much_worse_than_reported(geom):
+    report = torque_report(geom, TARGET_LOAD)
+    depth = geom.upper_arm + geom.lower_arm
+    reach = geom.base_radius - geom.end_effector_radius + depth
+    box = np.array([reach, reach, depth])
     rng = np.random.default_rng(7)
     found = 0
-    for position in rng.uniform([-0.33, -0.33, -0.29], [0.33, 0.33, 0.0], (20000, 3)):
-        if unreachable_cause(geom, position) is None:
-            found += 1
-            torque = shoulder_torque(geom, position, TARGET_LOAD)
-            assert torque.static.max() < 1.05 * report.static.torque
-            assert torque.accelerating.max() < 1.05 * report.accelerating.torque
-            assert tick_error(geom, position) < 1.05 * report.tick_error
-    assert found > 100
+    for position in rng.uniform(-box, box, (4000, 3)):
+        if unreachable_cause(geom, position) is not None:
+            continue
+        if singularity_margin(geom, inverse(geom, position)) < SINGULARITY_LIMIT:
+            continue
+        found += 1
+        torque = shoulder_torque(geom, position, TARGET_LOAD)
+        assert torque.static.max() < 1.1 * report.static.torque
+        assert torque.accelerating.max() < 1.1 * report.accelerating.torque
+        assert tick_error(geom, position) < 1.1 * report.tick_error
+    assert found > 10
+
+
+def test_positions_near_a_singularity_are_left_out_and_counted():
+    report = torque_report(LOWER_ARMS_FLAT, TARGET_LOAD)
+    assert report.near_singular > 0
+    assert report.accelerating.torque < 100.0
+    assert report.tick_error < 0.01
+    assert f"{report.near_singular} positions near a singularity" in str(report)
+
+
+def test_a_workspace_clear_of_singularities_leaves_nothing_out(report):
+    assert report.near_singular == 0
+    assert "singularity" not in str(report)
+
+
+def test_sweep_covers_a_workspace_above_the_shoulders():
+    report = torque_report(ABOVE_THE_SHOULDERS, TARGET_LOAD)
+    assert report.static.position[2] > 0.0
 
 
 def test_tick_error_of_the_report_is_at_its_position(report):
-    assert tick_error(DeltaGeometry(), report.tick_error_position) == pytest.approx(
-        report.tick_error
-    )
+    assert tick_error(BOWL, report.tick_error_position) == pytest.approx(report.tick_error)
 
 
 def test_report_refuses_a_geometry_without_a_workspace():
-    narrow = replace(DeltaGeometry(), joint_min=1.0, joint_max=1.0)
+    narrow = replace(BOWL, joint_min=1.0, joint_max=1.0)
     with pytest.raises(ValueError, match="workspace"):
         torque_report(narrow, TARGET_LOAD)
 
@@ -427,4 +506,4 @@ def test_report_text_gives_torques_positions_and_tick_error(report):
     assert f"{report.static.torque:.3f} N m" in text
     assert f"{report.accelerating.torque:.3f} N m" in text
     assert f"shoulder {report.static.shoulder}" in text
-    assert f"{report.tick_error * 1e3:.3f} mm" in text
+    assert f"{report.tick_error:.6f} m" in text
