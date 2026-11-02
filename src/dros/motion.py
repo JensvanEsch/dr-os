@@ -19,8 +19,22 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from .geometry import DeltaGeometry
-from .kinematics import inverse
+from .kinematics import UnreachableError, inverse
 from .servo.bus import JointBus
+
+
+def _shoulder_angles_for(geom: DeltaGeometry, position: ArrayLike) -> np.ndarray:
+    """Shoulder angles (rad) for `position` (m), checked against the joint limits.
+
+    Raises UnreachableError if the position is out of the workspace: out of the arms'
+    reach, or only reachable with a shoulder outside its joint limits.
+    """
+    theta = inverse(geom, position)
+    try:
+        geom.check_joint_limits(theta)
+    except ValueError as error:
+        raise UnreachableError(f"{position} is outside the workspace: {error}") from error
+    return theta
 
 
 def set_shoulder_angles(bus: JointBus, theta: ArrayLike) -> None:
@@ -34,10 +48,10 @@ def set_shoulder_angles(bus: JointBus, theta: ArrayLike) -> None:
 def set_end_effector_position(bus: JointBus, geom: DeltaGeometry, position: ArrayLike) -> None:
     """Send the joint target for `position` (m) and return without waiting.
 
-    Inverse kinematics runs first, so an unreachable position fails before anything
-    is sent.
+    Raises UnreachableError before any bus command if the position is out of the
+    workspace.
     """
-    set_shoulder_angles(bus, inverse(geom, position))
+    set_shoulder_angles(bus, _shoulder_angles_for(geom, position))
 
 
 def move_shoulder_angles(
@@ -79,11 +93,12 @@ def move_end_effector_position(
     """Move the end-effector to `position` (m) and wait until the shoulders reach it.
 
     Inverse kinematics gives the shoulder angles; `move_shoulder_angles` sends and
-    waits for them, with `sleep`, `poll_interval` and `tolerance` passed on.
+    waits for them, with `sleep`, `poll_interval` and `tolerance` passed on. Raises
+    UnreachableError before any bus command if the position is out of the workspace.
     """
     move_shoulder_angles(
         bus,
-        inverse(geom, position),
+        _shoulder_angles_for(geom, position),
         sleep=sleep,
         poll_interval=poll_interval,
         tolerance=tolerance,

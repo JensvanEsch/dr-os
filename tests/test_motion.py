@@ -3,7 +3,7 @@ import time
 import numpy as np
 import pytest
 
-from dros import DeltaGeometry, forward, inverse
+from dros import DeltaGeometry, UnreachableError, forward, inverse
 from dros.motion import (
     move_end_effector_position,
     move_shoulder_angles,
@@ -41,6 +41,47 @@ class RecordingBus(SimBus):
         self.targets.append(np.array(theta))
         self.positions_at_write.append(end_effector_position(self))
         super().write_angles(theta)
+
+
+class CallLogBus(SimBus):
+    """A sim bus that logs the name of every bus method called on it."""
+
+    def __init__(self, **kwargs):
+        super().__init__(GEOM, max_velocity=MAX_VELOCITY, max_acceleration=MAX_ACCELERATION, **kwargs)
+        self.enable_torque()
+        self.calls = []
+
+    def read_angles(self):
+        self.calls.append("read_angles")
+        return super().read_angles()
+
+    def write_angles(self, theta):
+        self.calls.append("write_angles")
+        super().write_angles(theta)
+
+    def enable_torque(self):
+        if hasattr(self, "calls"):
+            self.calls.append("enable_torque")
+        super().enable_torque()
+
+    def disable_torque(self):
+        self.calls.append("disable_torque")
+        super().disable_torque()
+
+
+UNREACHABLE = {
+    "beyond the arms": np.array(GEOM.rest_position) - [0.0, 0.0, 1.0],
+    "past joint_max": forward(GEOM, [GEOM.joint_max + 0.1] * 3),
+    "past joint_min": forward(GEOM, [GEOM.joint_min - 0.1] * 3),
+}
+
+
+@pytest.mark.parametrize("position", UNREACHABLE.values(), ids=UNREACHABLE.keys())
+def test_an_unreachable_position_raises_before_any_bus_command(position):
+    bus = CallLogBus()
+    with pytest.raises(UnreachableError):
+        move_end_effector_position(bus, GEOM, position, sleep=bus.advance)
+    assert bus.calls == []
 
 
 def test_a_long_move_goes_out_as_one_joint_target():
