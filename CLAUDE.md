@@ -27,7 +27,8 @@ Small payload, no hard requirements: cheap and reproducible beats fast.
   workspace map data
 - `src/dros/motion.py`     - `set_end_effector_position` (m) / `set_shoulder_angles` (rad) send one
   joint target and return; `move_end_effector_position` / `move_shoulder_angles` also wait
-  until the shoulders settle
+  until the shoulders settle (or time out, holding the target with torque on);
+  `end_at_rest_position` is the only one that turns torque off, once at the rest position
 - `src/dros/viz.py`        - workspace plot (optional `viz` extra, matplotlib)
 - `src/dros/servo/`        - JointBus protocol and its safety checks, MockBus, SimBus, STS3215 tick conversion
 - `src/dros/sim/`          - digital twin (not started)
