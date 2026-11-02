@@ -30,6 +30,7 @@ Small payload, no hard requirements: cheap and reproducible beats fast.
 - `src/dros/sim/`          - digital twin (not started)
 - `tests/`                     - pytest; kinematics round-trip tests live here
 - `hw/`                        - scripts that touch real hardware (see safety rules)
+- `demo/`                      - scripts that touch no hardware, e.g. the workspace plot
 - `docs/adr/`                  - short ADRs (context, decision, consequences)
 - `docs/devlog/`               - dated development notes, source for posts/videos
 - `docs/hardware.md`           - BOM, measured dimensions, servo IDs, wiring
