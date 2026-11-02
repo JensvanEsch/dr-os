@@ -13,6 +13,7 @@ dependencies = ["numpy>=1.24"]
 [project.optional-dependencies]
 dev = ["pytest>=7", "ruff>=0.4"]
 hw = ["feetech-servo-sdk"]
+viz = ["matplotlib>=3.7"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
