@@ -130,16 +130,9 @@ commanded. It speaks SI and knows nothing about motors. The mock bus, the sim bu
 and the Feetech bus all implement it.
 _Avoid_: Driver, controller, port
 
-**Far-target threshold**:
-The largest distance, in radians, that any one shoulder's target may be from its
-measured angle. A joint bus refuses a target further away, so one bad command
-can't snap an arm; long moves step through targets within it.
-_Avoid_: Max step, jump limit
-
 **Joint bus contract**:
 The shared test suite (`tests/joint_bus_contract.py`) that every joint bus must
-pass: joint limits, the far-target threshold, refusal with torque off, and
-read-back.
+pass: joint limits, refusal with torque off, and read-back.
 
 **Mock bus**:
 A joint bus that stores what it is told and moves instantly. It has no motion of

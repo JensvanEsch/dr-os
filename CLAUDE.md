@@ -49,7 +49,7 @@ Small payload, no hard requirements: cheap and reproducible beats fast.
   Develop against `MockBus` by default.
 - Joint limits are defined in one place (`DeltaGeometry.check_joint_limits`).
   Every joint bus enforces them itself in `write_angles`, together with the
-  far-target threshold and the torque-off refusal (ADR 0005). New buses must pass
+  torque-off refusal (ADR 0005, 0006). New buses must pass
   the shared contract suite in `tests/joint_bus_contract.py`.
 - Architectural decisions go in `docs/adr/NNNN-title.md`.
 - Keep dependencies minimal; heavy things (sim, viz, hardware SDK) go behind

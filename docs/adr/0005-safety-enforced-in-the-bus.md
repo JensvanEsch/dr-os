@@ -1,5 +1,8 @@
 # 0005 - Safety enforced inside the joint bus
 
+The far-target threshold is superseded by ADR 0006: a joint bus no longer refuses
+far targets, and long moves no longer need stepping.
+
 ## Context
 `safe_write` was the only sanctioned way to command joints, but only convention
 enforced that: any script could call `write_angles` directly. A real servo also
