@@ -84,6 +84,17 @@ def test_an_unreachable_position_raises_before_any_bus_command(position):
     assert bus.calls == []
 
 
+@pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])
+@pytest.mark.parametrize("axis", range(3))
+def test_a_position_that_is_not_finite_raises_before_any_bus_command(bad, axis):
+    bus = CallLogBus()
+    position = np.array(GEOM.rest_position)
+    position[axis] = bad
+    with pytest.raises(ValueError, match="not finite"):
+        move_end_effector_position(bus, GEOM, position, sleep=bus.advance)
+    assert bus.calls == []
+
+
 def test_a_long_move_goes_out_as_one_joint_target():
     bus = RecordingBus()
     # From the shoulders at 0 rad to all three at about 1.17 rad.

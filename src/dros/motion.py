@@ -26,9 +26,12 @@ from .servo.bus import JointBus
 def _shoulder_angles_for(geom: DeltaGeometry, position: ArrayLike) -> np.ndarray:
     """Shoulder angles (rad) for `position` (m), checked against the joint limits.
 
-    Raises UnreachableError if the position is out of the workspace: out of the arms'
-    reach, or only reachable with a shoulder outside its joint limits.
+    Raises ValueError if the position contains NaN or infinity, and UnreachableError
+    if it is out of the workspace: out of the arms' reach, or only reachable with a
+    shoulder outside its joint limits.
     """
+    if not np.all(np.isfinite(np.asarray(position, dtype=float))):
+        raise ValueError(f"position {position} is not finite")
     theta = inverse(geom, position)
     try:
         geom.check_joint_limits(theta)
