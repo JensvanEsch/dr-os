@@ -6,7 +6,7 @@ from numpy.typing import ArrayLike
 
 from ..geometry import DeltaGeometry
 from .bus import check_motion_limits, check_target
-from .sts3215 import RAD_PER_TICK, rad_to_ticks, ticks_to_rad
+from .feetech import RAD_PER_TICK, rad_to_ticks, ticks_to_rad
 
 
 class SimBus:
