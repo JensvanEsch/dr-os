@@ -1,4 +1,5 @@
 from dataclasses import replace
+from itertools import product
 
 import numpy as np
 import pytest
@@ -10,11 +11,16 @@ from dros.analysis import (
     Load,
     Shortfall,
     TargetCylinder,
+    TorqueReport,
+    WorstTorque,
     check_cylinder,
     reachable,
     shoulder_torque,
+    tick_error,
+    torque_report,
     unreachable_cause,
 )
+from dros.servo import ticks_to_rad
 
 # Shoulder offset 0.06 m, so a centred end-effector forms a 6-8-10 triangle at
 # theta = 0: elbow at radius 0.08, lower arm 0.10, wrist 0.06 below.
@@ -308,3 +314,117 @@ def test_without_acceleration_the_two_torques_are_equal():
     load = Load(payload=0.5, end_effector_mass=0.1, upper_arm_mass=0.03, acceleration=0.0)
     torque = shoulder_torque(DeltaGeometry(), [0.05, 0.02, -0.2], load)
     assert np.array_equal(torque.accelerating, torque.static)
+
+
+def test_tick_error_of_a_centred_end_effector():
+    # One tick is 0.001 rad, so each shoulder may be 0.0005 rad off. From the Jacobian of
+    # FLAT, (+, -, -) moves the end-effector (-0.02, 0, 1/150) per radian, which is more
+    # than the (0, 0, -0.02) of all three together: 0.021082 m/rad.
+    assert tick_error(FLAT, FLAT_POSITION, joint_resolution=0.001) == pytest.approx(1.0541e-5, 1e-3)
+
+
+def test_tick_error_matches_rounding_the_shoulders_through_forward():
+    geom = DeltaGeometry()
+    half = 0.0005
+    corners = half * np.array(list(product([-1.0, 1.0], repeat=3)))
+    rng = np.random.default_rng(6)
+    for theta in rng.uniform(0.0, 1.2, (30, 3)):
+        position = forward(geom, theta)
+        worst = max(np.linalg.norm(forward(geom, theta + c) - position) for c in corners)
+        assert tick_error(geom, position, joint_resolution=0.001) == pytest.approx(worst, 1e-2)
+
+
+def test_tick_error_defaults_to_the_resolution_of_the_servo_encoder():
+    size = ticks_to_rad(1, zero_tick=0)
+    expected = tick_error(FLAT, FLAT_POSITION, joint_resolution=float(size))
+    assert tick_error(FLAT, FLAT_POSITION) == expected
+
+
+ARM_ONLY = Load(payload=0.0, end_effector_mass=0.0, upper_arm_mass=0.03, acceleration=0.0)
+TARGET_LOAD = Load(payload=0.5, end_effector_mass=0.05, upper_arm_mass=0.03, acceleration=2.0)
+
+
+@pytest.fixture(scope="module")
+def report() -> TorqueReport:
+    return torque_report(DeltaGeometry(), TARGET_LOAD)
+
+
+def test_worst_case_for_upper_arms_alone_is_an_upper_arm_at_horizontal():
+    # Torque is 0.03 kg * 9.81 * 0.045 m * cos(theta), at most 0.013244 N m.
+    geom = DeltaGeometry()
+    worst = torque_report(geom, ARM_ONLY).static
+    assert worst.torque == pytest.approx(0.013244, rel=1e-3)
+    assert inverse(geom, worst.position)[worst.shoulder] == pytest.approx(0.0, abs=0.05)
+
+
+def test_report_says_where_the_worst_case_is(report):
+    for worst, kind in ((report.static, "static"), (report.accelerating, "accelerating")):
+        at_worst = getattr(shoulder_torque(DeltaGeometry(), worst.position, TARGET_LOAD), kind)
+        assert worst.shoulder in (0, 1, 2)
+        assert at_worst[worst.shoulder] == pytest.approx(worst.torque)
+        assert at_worst.max() == pytest.approx(worst.torque)
+
+
+def test_accelerating_worst_case_is_at_least_the_static_one(report):
+    assert report.accelerating.torque > report.static.torque
+
+
+def test_no_position_in_the_workspace_is_much_worse_than_reported(report):
+    geom = DeltaGeometry()
+    rng = np.random.default_rng(7)
+    found = 0
+    for position in rng.uniform([-0.33, -0.33, -0.29], [0.33, 0.33, 0.0], (20000, 3)):
+        if unreachable_cause(geom, position) is None:
+            found += 1
+            torque = shoulder_torque(geom, position, TARGET_LOAD)
+            assert torque.static.max() < 1.05 * report.static.torque
+            assert torque.accelerating.max() < 1.05 * report.accelerating.torque
+            assert tick_error(geom, position) < 1.05 * report.tick_error
+    assert found > 100
+
+
+def test_tick_error_of_the_report_is_at_its_position(report):
+    assert tick_error(DeltaGeometry(), report.tick_error_position) == pytest.approx(
+        report.tick_error
+    )
+
+
+def test_report_refuses_a_geometry_without_a_workspace():
+    narrow = replace(DeltaGeometry(), joint_min=1.0, joint_max=1.0)
+    with pytest.raises(ValueError, match="workspace"):
+        torque_report(narrow, TARGET_LOAD)
+
+
+def test_margin_with_torque_to_spare():
+    margin = WorstTorque(0.4, (0.0, 0.0, -0.2), 1).margin(0.6)
+    assert margin.spare == pytest.approx(0.2)
+    assert margin.ratio == pytest.approx(1.5)
+    assert margin.passed
+
+
+def test_margin_short_of_torque():
+    margin = WorstTorque(0.8, (0.0, 0.0, -0.2), 1).margin(0.6)
+    assert margin.spare == pytest.approx(-0.2)
+    assert margin.ratio == pytest.approx(0.75)
+    assert not margin.passed
+    assert "short" in str(margin).lower()
+
+
+def test_margin_without_any_required_torque_passes():
+    margin = WorstTorque(0.0, (0.0, 0.0, -0.2), 1).margin(0.6)
+    assert margin.passed
+    assert margin.ratio == float("inf")
+
+
+@pytest.mark.parametrize("continuous", [0.0, -1.0, float("nan")])
+def test_margin_refuses_a_servo_without_torque(continuous):
+    with pytest.raises(ValueError):
+        WorstTorque(0.4, (0.0, 0.0, -0.2), 1).margin(continuous)
+
+
+def test_report_text_gives_torques_positions_and_tick_error(report):
+    text = str(report)
+    assert f"{report.static.torque:.3f} N m" in text
+    assert f"{report.accelerating.torque:.3f} N m" in text
+    assert f"shoulder {report.static.shoulder}" in text
+    assert f"{report.tick_error * 1e3:.3f} mm" in text

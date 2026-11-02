@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from itertools import product
 from math import ceil
 
 import numpy as np
@@ -10,6 +11,7 @@ from numpy.typing import ArrayLike
 
 from .geometry import DeltaGeometry
 from .kinematics import UnreachableError, forward, inverse, jacobian
+from .servo import ticks_to_rad
 
 # How densely a target cylinder is sampled. Rings are a fixed distance apart because
 # joint_min leaves small round holes in the workspace that wider rings can step over.
@@ -20,6 +22,12 @@ _RING_SPACING = 0.010  # m
 _RING_ANGLES = np.deg2rad(np.arange(0.0, 360.0, 15.0))
 
 GRAVITY = 9.81  # m/s^2
+TICK_SIZE = float(ticks_to_rad(1, zero_tick=0))  # rad, one encoder tick
+# The sweep for worst cases. Arms sit 120 deg apart and each mirrors the workspace, so the
+# 60 deg wedge with all three shoulders stands in for the rest.
+_SWEEP_SPACING = 0.005  # m
+_SWEEP_ANGLES = np.deg2rad(np.arange(0.0, 61.0, 15.0))
+_ROUNDING = 0.5 * np.array(list(product([-1.0, 1.0], repeat=3)))  # in ticks, the corners
 
 
 class Cause(Enum):
@@ -238,15 +246,19 @@ class ShoulderTorque:
     accelerating: np.ndarray
 
 
+def _check_reachable(geom: DeltaGeometry, position: np.ndarray) -> None:
+    cause = unreachable_cause(geom, position)
+    if cause is not None:
+        raise UnreachableError(f"{position} is out of reach: {cause.value}")
+
+
 def shoulder_torque(geom: DeltaGeometry, position: ArrayLike, load: Load) -> ShoulderTorque:
     """Torque the shoulders need with the end-effector at position (m).
 
     Raises UnreachableError if the end-effector cannot reach position.
     """
     position = np.asarray(position, dtype=float)
-    cause = unreachable_cause(geom, position)
-    if cause is not None:
-        raise UnreachableError(f"{position} is out of reach: {cause.value}")
+    _check_reachable(geom, position)
     theta = inverse(geom, position)
     try:
         moves = jacobian(geom, theta)
@@ -262,3 +274,151 @@ def shoulder_torque(geom: DeltaGeometry, position: ArrayLike, load: Load) -> Sho
     inertia = load.upper_arm_mass * geom.upper_arm**2 / 3.0  # uniform rod about its end
     per_acceleration = np.linalg.norm(mass * moves.T + inertia * rates, axis=1)
     return ShoulderTorque(static, static + load.acceleration * per_acceleration)
+
+
+def tick_error(
+    geom: DeltaGeometry, position: ArrayLike, joint_resolution: float = TICK_SIZE
+) -> float:
+    """Largest position error (m) at position from rounding each shoulder to a tick.
+
+    joint_resolution is the size of one tick (rad), and each shoulder can be half of one
+    off. Raises UnreachableError if the end-effector cannot reach position.
+    """
+    position = np.asarray(position, dtype=float)
+    _check_reachable(geom, position)
+    moves = jacobian(geom, inverse(geom, position))
+    return float(np.linalg.norm(moves @ (joint_resolution * _ROUNDING).T, axis=0).max())
+
+
+@dataclass(frozen=True)
+class TorqueMargin:
+    """A required torque against a servo's continuous torque (N m)."""
+
+    required: float
+    continuous: float
+
+    @property
+    def spare(self) -> float:
+        """Torque left over (N m), negative when the servo falls short."""
+        return self.continuous - self.required
+
+    @property
+    def ratio(self) -> float:
+        """Continuous torque as a multiple of the required torque."""
+        return self.continuous / self.required if self.required > 0.0 else float("inf")
+
+    @property
+    def passed(self) -> bool:
+        return self.spare >= 0.0
+
+    def __str__(self) -> str:
+        verdict = "OK" if self.passed else "SHORT"
+        return (
+            f"{verdict}: {self.required:.3f} N m required, {self.continuous:.3f} N m "
+            f"continuous, {abs(self.spare):.3f} N m {'spare' if self.passed else 'short'} "
+            f"(x{self.ratio:.2f})"
+        )
+
+
+@dataclass(frozen=True)
+class WorstTorque:
+    """The largest torque found, on which shoulder, with the end-effector where.
+
+    The workspace is symmetric, so the same torque also occurs on the other shoulders at
+    the rotated and mirrored positions.
+    """
+
+    torque: float
+    position: tuple[float, float, float]
+    shoulder: int
+
+    def margin(self, continuous_torque: float) -> TorqueMargin:
+        """Compare with a servo's continuous torque (N m)."""
+        if not continuous_torque > 0.0:  # False for NaN
+            raise ValueError(f"continuous torque must be positive: {continuous_torque}")
+        return TorqueMargin(self.torque, continuous_torque)
+
+    def __str__(self) -> str:
+        x, y, z = self.position
+        return (
+            f"{self.torque:.3f} N m on shoulder {self.shoulder}, "
+            f"end-effector at ({x:.3f}, {y:.3f}, {z:.3f}) m"
+        )
+
+
+@dataclass(frozen=True)
+class TorqueReport:
+    """Worst cases over the workspace, sampled every _SWEEP_SPACING.
+
+    static, accelerating: worst shoulder torques, each with its own position
+    tick_error:           worst position error from rounding to ticks (m)
+    tick_error_position:  where that occurs (m)
+    joint_resolution:     the tick size used (rad)
+    samples:              number of reachable positions sampled
+    """
+
+    load: Load
+    static: WorstTorque
+    accelerating: WorstTorque
+    tick_error: float
+    tick_error_position: tuple[float, float, float]
+    joint_resolution: float
+    samples: int
+
+    def __str__(self) -> str:
+        x, y, z = self.tick_error_position
+        error = f"{self.tick_error * 1e3:.3f} mm at {self.joint_resolution:.5f} rad per tick"
+        return "\n".join(
+            [
+                f"Over {self.samples} sampled positions:",
+                f"  static: {self.static}",
+                f"  at {self.load.acceleration:.1f} m/s^2: {self.accelerating}",
+                f"  tick error: {error}, end-effector at ({x:.3f}, {y:.3f}, {z:.3f}) m",
+            ]
+        )
+
+
+def _sweep_positions(geom: DeltaGeometry) -> np.ndarray:
+    """Reachable positions (m, shape (N, 3)) sampled across the wedge of the workspace."""
+    depth = geom.upper_arm + geom.lower_arm
+    reach = geom.base_radius - geom.end_effector_radius + depth
+    radii = _SWEEP_SPACING * np.arange(1, ceil(reach / _SWEEP_SPACING) + 1)
+    offsets = [(0.0, 0.0)]
+    for r in radii:
+        offsets.extend(zip(r * np.cos(_SWEEP_ANGLES), r * np.sin(_SWEEP_ANGLES)))
+    layers = -_SWEEP_SPACING * np.arange(ceil(depth / _SWEEP_SPACING) + 1)
+    positions = np.array([(x, y, z) for z in layers for x, y in offsets])
+    return positions[reachable(geom, positions)]
+
+
+def _worst(torques: np.ndarray, positions: np.ndarray) -> WorstTorque:
+    """Largest entry of torques (shape (N, 3)), with positions (shape (N, 3)) alongside."""
+    sample, shoulder = np.unravel_index(np.argmax(torques), torques.shape)
+    x, y, z = positions[sample]
+    position = (float(x), float(y), float(z))
+    return WorstTorque(float(torques[sample, shoulder]), position, int(shoulder))
+
+
+def torque_report(
+    geom: DeltaGeometry, load: Load, joint_resolution: float = TICK_SIZE
+) -> TorqueReport:
+    """Find the worst shoulder torque and tick error across the workspace of geom.
+
+    Raises ValueError if the sweep finds no reachable position. A worst case that falls
+    between samples is missed, so treat the numbers as good to a few percent.
+    """
+    positions = _sweep_positions(geom)
+    if len(positions) == 0:
+        raise ValueError(f"the sweep found no workspace for {geom}")
+    torques = [shoulder_torque(geom, p, load) for p in positions]
+    errors = np.array([tick_error(geom, p, joint_resolution) for p in positions])
+    x, y, z = positions[np.argmax(errors)]
+    return TorqueReport(
+        load=load,
+        static=_worst(np.array([t.static for t in torques]), positions),
+        accelerating=_worst(np.array([t.accelerating for t in torques]), positions),
+        tick_error=float(errors.max()),
+        tick_error_position=(float(x), float(y), float(z)),
+        joint_resolution=joint_resolution,
+        samples=len(positions),
+    )

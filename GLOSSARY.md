@@ -90,6 +90,17 @@ Where along z a target cylinder sits. The check searches for the best one.
 **Shortfall**:
 A position inside the target cylinder that the end-effector cannot reach.
 
+**Payload**:
+The mass the end-effector carries. An input to the torque analysis, not a part of
+the geometry.
+
+**Load**:
+The payload and moving masses a shoulder has to carry, with the size of the
+acceleration. Compared with a servo's continuous torque through the margin.
+
+**Margin**:
+A servo's continuous torque set against the worst shoulder torque required.
+
 **Forward (kinematics)**:
 The map from the three shoulder angles (θ) to the end-effector position. Three
 angles allow two positions; it returns the lower one, and a position that only
