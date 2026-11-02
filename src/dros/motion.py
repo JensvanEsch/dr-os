@@ -51,6 +51,11 @@ def _check_start(bus: JointBus, geom: DeltaGeometry) -> None:
     """Raise ShoulderOutsideLimitsError if any measured shoulder angle is outside the limits."""
     measured = bus.read_angles()
     for arm, theta in enumerate(measured):
+        if not np.isfinite(theta):
+            raise ShoulderOutsideLimitsError(
+                f"arm {arm} reads {theta} rad, which is not finite, so nothing was moved. "
+                "Check that servo's connection and reading before starting again."
+            )
         try:
             geom.check_joint_limits(theta)
         except ValueError:
@@ -65,12 +70,15 @@ def _check_start(bus: JointBus, geom: DeltaGeometry) -> None:
 def set_shoulder_angles(bus: JointBus, geom: DeltaGeometry, theta: ArrayLike) -> None:
     """Send `theta` (rad) as the joint target and return without waiting.
 
-    Raises ShoulderOutsideLimitsError, with no motion sent, if the measured angles
-    start outside the joint limits. `write_angles` checks the target against the
-    joint limits and refuses while torque is off.
+    Raises ValueError before any bus command if the target is outside the joint
+    limits, and ShoulderOutsideLimitsError, with no motion sent, if the measured
+    angles start outside them or are not finite. `write_angles` checks the target
+    again and refuses while torque is off.
     """
+    target = np.asarray(theta, dtype=float)
+    geom.check_joint_limits(target)
     _check_start(bus, geom)
-    bus.write_angles(np.asarray(theta, dtype=float))
+    bus.write_angles(target)
 
 
 def set_end_effector_position(bus: JointBus, geom: DeltaGeometry, position: ArrayLike) -> None:
@@ -101,7 +109,10 @@ def move_shoulder_angles(
     clock's advance as `sleep` to run on virtual time.
 
     Raises TimeoutError if the shoulders have not settled after `timeout` seconds of
-    polling, counted from the poll intervals so it works on virtual time too.
+    polling, counted from the poll intervals so it works on virtual time too. Time
+    spent inside `read_angles` is not counted, so on a real bus the wait runs a little
+    longer than `timeout`. The 10 s default covers a move across the whole joint
+    range above about 0.2 rad/s; pass a longer one for slower max velocities.
 
     On any error the target stays sent and torque stays on, so the servos hold it:
     turning torque off would drop the end-effector (ADR 0005). Errors here never

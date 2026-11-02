@@ -115,6 +115,25 @@ def test_starting_outside_the_joint_limits_stops_and_asks_to_reposition_by_hand(
     assert np.allclose(bus.read_angles(), start, rtol=0, atol=RAD_PER_TICK / 2)
 
 
+def test_a_reading_that_is_not_finite_stops_without_asking_to_move_an_arm():
+    class FailedReadBus(CallLogBus):
+        def read_angles(self):
+            return super().read_angles() * [1.0, np.nan, 1.0]
+
+    bus = FailedReadBus(start_angles=[0.5, 0.5, 0.5])
+    with pytest.raises(ShoulderOutsideLimitsError, match="arm 1.*not finite") as error:
+        move_end_effector_position(bus, GEOM, GEOM.rest_position, sleep=bus.advance)
+    assert "by hand" not in str(error.value)
+    assert "write_angles" not in bus.calls
+
+
+def test_a_shoulder_target_outside_the_joint_limits_raises_before_any_bus_command():
+    bus = CallLogBus()
+    with pytest.raises(ValueError, match="joint limits"):
+        move_shoulder_angles(bus, GEOM, [0.5, GEOM.joint_max + 0.1, 0.5], sleep=bus.advance)
+    assert bus.calls == []
+
+
 class SoftwareError(Exception):
     pass
 
