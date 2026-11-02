@@ -107,7 +107,7 @@ _PRESENT_POSITION = (56, 2)
 class FeetechBus:
     """Joint bus for three Feetech servos, one per shoulder, behind a register port.
 
-    `servo_ids[i]` drives arm i. Angles are converted with the centre tick as zero
+    `servo_ids[i]` drives arm i. Angles are converted with the model's centre tick as zero
     and direction +1 until calibration exists.
 
     On connect the bus writes max velocity (rad/s), max acceleration (rad/s^2) and
@@ -188,10 +188,12 @@ class FeetechBus:
             self._write(servo_id, _TORQUE_LIMIT, torque)
 
     def _to_ticks(self, theta: ArrayLike) -> np.ndarray:
-        return rad_to_ticks(theta, ticks_per_rev=self.model.ticks_per_rev)
+        per_rev = self.model.ticks_per_rev
+        return rad_to_ticks(theta, zero_tick=per_rev // 2, ticks_per_rev=per_rev)
 
     def _to_rad(self, ticks: ArrayLike) -> np.ndarray:
-        return ticks_to_rad(ticks, ticks_per_rev=self.model.ticks_per_rev)
+        per_rev = self.model.ticks_per_rev
+        return ticks_to_rad(ticks, zero_tick=per_rev // 2, ticks_per_rev=per_rev)
 
     def _read(self, servo_id: int, register: tuple[int, int]) -> int:
         return self._port.read(servo_id, *register)
