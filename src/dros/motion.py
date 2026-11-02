@@ -98,7 +98,6 @@ def move_shoulder_angles(
     sleep: Callable[[float], None] = time.sleep,
     poll_interval: float = 0.01,
     tolerance: float = 0.002,
-    timeout: float = 10.0,
 ) -> None:
     """Move the shoulders to `theta` (rad) and wait until they have settled there.
 
@@ -108,28 +107,16 @@ def move_shoulder_angles(
     rounds a target; settling is what puts the shoulders on it. Pass a simulated
     clock's advance as `sleep` to run on virtual time.
 
-    Raises TimeoutError if the shoulders have not settled after `timeout` seconds of
-    polling, counted from the poll intervals so it works on virtual time too. Time
-    spent inside `read_angles` is not counted, so on a real bus the wait runs a little
-    longer than `timeout`. The 10 s default covers a move across the whole joint
-    range above about 0.2 rad/s; pass a longer one for slower max velocities.
-
     On any error the target stays sent and torque stays on, so the servos hold it:
-    turning torque off would drop the end-effector (ADR 0005). Errors here never
-    touch torque.
+    turning torque off would drop the end-effector (ADR 0005). The motion functions
+    never touch torque; ending a run at the rest position with torque off is up to
+    the application.
     """
     target = np.asarray(theta, dtype=float)
     set_shoulder_angles(bus, geom, target)
     before = bus.read_angles()
-    waited = 0.0
     while True:
-        if waited >= timeout:
-            raise TimeoutError(
-                f"the shoulders did not settle on {target} rad within {timeout} s, "
-                f"measured {before} rad; the target is held with torque on"
-            )
         sleep(poll_interval)
-        waited += poll_interval
         now = bus.read_angles()
         if np.array_equal(now, before) and np.all(np.abs(now - target) <= tolerance):
             return
@@ -144,13 +131,12 @@ def move_end_effector_position(
     sleep: Callable[[float], None] = time.sleep,
     poll_interval: float = 0.01,
     tolerance: float = 0.002,
-    timeout: float = 10.0,
 ) -> None:
     """Move the end-effector to `position` (m) and wait until the shoulders reach it.
 
     Inverse kinematics gives the shoulder angles; `move_shoulder_angles` sends and
-    waits for them, with `sleep`, `poll_interval`, `tolerance` and `timeout` passed
-    on, and fails as it does. Raises UnreachableError before any bus command if the
+    waits for them, with `sleep`, `poll_interval` and `tolerance` passed on, and
+    fails as it does. Raises UnreachableError before any bus command if the
     position is out of the workspace.
     """
     move_shoulder_angles(
@@ -160,33 +146,4 @@ def move_end_effector_position(
         sleep=sleep,
         poll_interval=poll_interval,
         tolerance=tolerance,
-        timeout=timeout,
     )
-
-
-def end_at_rest_position(
-    bus: JointBus,
-    geom: DeltaGeometry,
-    *,
-    sleep: Callable[[float], None] = time.sleep,
-    poll_interval: float = 0.01,
-    tolerance: float = 0.002,
-    timeout: float = 10.0,
-) -> None:
-    """End a normal run: move to the rest position, then turn torque off.
-
-    Torque goes off only once the shoulders have settled at the rest position, so the
-    end-effector is never dropped from height. If the move there fails, torque stays
-    on and the target is held, as in `move_end_effector_position`, whose keyword
-    arguments this takes.
-    """
-    move_end_effector_position(
-        bus,
-        geom,
-        geom.rest_position,
-        sleep=sleep,
-        poll_interval=poll_interval,
-        tolerance=tolerance,
-        timeout=timeout,
-    )
-    bus.disable_torque()
