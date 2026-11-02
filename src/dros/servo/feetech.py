@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -95,13 +95,25 @@ HLS = FeetechModel(
     full_torque_limit=1000,
 )
 
-# Register addresses, believed shared by the STS and HLS families: (address, size).
-_TORQUE_ENABLE = (40, 1)
-_ACCELERATION = (41, 1)
-_GOAL_POSITION = (42, 2)
-_GOAL_SPEED = (46, 2)
-_TORQUE_LIMIT = (48, 2)
-_PRESENT_POSITION = (56, 2)
+class _Register(NamedTuple):
+    """A servo register: address, size in bytes, and whether it holds a signed value.
+
+    Signed registers are sign-magnitude, not two's complement: the top bit is the
+    sign and the rest the size, so tick -38 is stored as 0x8000 | 38.
+    """
+
+    address: int
+    size: int
+    signed: bool = False
+
+
+# Believed shared by the STS and HLS families.
+_TORQUE_ENABLE = _Register(40, 1)
+_ACCELERATION = _Register(41, 1)
+_GOAL_POSITION = _Register(42, 2, signed=True)
+_GOAL_SPEED = _Register(46, 2, signed=True)
+_TORQUE_LIMIT = _Register(48, 2)
+_PRESENT_POSITION = _Register(56, 2, signed=True)
 
 
 class FeetechBus:
@@ -199,12 +211,20 @@ class FeetechBus:
         per_rev = self.model.ticks_per_rev
         return ticks_to_rad(ticks, zero_tick=per_rev // 2, ticks_per_rev=per_rev)
 
-    def _read(self, servo_id: int, register: tuple[int, int]) -> int:
-        return self._port.read(servo_id, *register)
+    def _read(self, servo_id: int, register: _Register) -> int:
+        raw = self._port.read(servo_id, register.address, register.size)
+        if not register.signed:
+            return raw
+        sign_bit = 1 << (8 * register.size - 1)
+        return -(raw & ~sign_bit) if raw & sign_bit else raw
 
-    def _write(self, servo_id: int, register: tuple[int, int], value: int) -> None:
-        self._port.write(servo_id, register[0], register[1], value)
-
+    def _write(self, servo_id: int, register: _Register, value: int) -> None:
+        if register.signed:
+            sign_bit = 1 << (8 * register.size - 1)
+            if abs(value) >= sign_bit:
+                raise ValueError(f"{value} does not fit register {register.address}")
+            value = sign_bit | -value if value < 0 else value
+        self._port.write(servo_id, register.address, register.size, value)
 
 def _register_value(units: float, largest: int) -> int:
     """A speed or acceleration in register units, rounded down and kept in [1, largest].

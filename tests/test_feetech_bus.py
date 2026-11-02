@@ -149,3 +149,26 @@ def test_a_small_torque_limit_is_never_sent_as_zero():
     servos = fake_servos_at([0.1, 0.2, 0.3])
     connect(servos, torque_limit=0.0004)
     assert register(servos, TORQUE_LIMIT) == [1, 1, 1]
+
+
+# The STS position registers are sign-magnitude: bit 15 is the sign, bits 0-14 the size.
+SIGN_BIT = 1 << 15
+
+
+def test_a_negative_present_position_is_read_from_its_sign_bit():
+    # Raw 100 with the sign bit set is tick -100: 2148 ticks below the centre tick 2048.
+    servos = FakeServos({1: SIGN_BIT | 100, 2: 2048, 3: 2048})
+    bus = connect(servos)
+    assert bus.read_angles()[0] == pytest.approx(-2148 * RAD_PER_TICK)
+
+
+def test_a_goal_below_tick_zero_is_written_with_its_sign_bit():
+    # A geometry whose lower limit reaches past tick 0, which is -pi rad from the centre.
+    wide = DeltaGeometry(joint_min=-3.3)
+    servos = fake_servos_at([0.1, 0.2, 0.3])
+    bus = FeetechBus(servos, wide, model=STS, max_velocity=3.0, max_acceleration=10.0)
+    bus.enable_torque()
+    # -3.2 rad is -2086.1 ticks from the centre: tick 2048 - 2086 = -38.
+    bus.write_angles([-3.2, 0.2, 0.3])
+    assert register(servos, GOAL_POSITION)[0] == SIGN_BIT | 38
+    assert bus.read_angles()[0] == pytest.approx(-3.2, abs=RAD_PER_TICK)
