@@ -105,8 +105,9 @@ A servo's continuous torque set against the worst shoulder torque required.
 How the end-effector moves per radian of each shoulder (dp/dθ, a 3×3 matrix).
 
 **Singularity**:
-A position where the lower arms are coplanar, or an upper arm is in line with its
-lower arm. Shoulder torque grows without bound near one.
+A position where the lower arms are coplanar, or a lower arm lies in the plane of
+its upper arm and shoulder axis. Accelerating shoulder torque grows without bound
+near one, and static torque too when the lower arms are coplanar.
 
 **Tick error**:
 The largest position error at a position from rounding each shoulder to a tick.

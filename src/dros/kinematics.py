@@ -121,13 +121,15 @@ def jacobian(geom: DeltaGeometry, theta) -> np.ndarray:
 def singularity_margin(geom: DeltaGeometry, theta) -> float:
     """How far joint angles theta (rad) are from a singularity: 0 is on one, 1 is far off.
 
-    The smaller of two measures. The lower arms lose their grip on the end-effector when
-    they become coplanar, so torque grows without bound: |det| of the unit lower arms.
-    An upper arm in line with its lower arm can no longer move the wrist along the lower
-    arm, so its angular acceleration grows without bound: the sine between the two.
+    The smaller of two measures. When the lower arms become coplanar they lose their grip
+    on the end-effector and all torque grows without bound: |det| of the unit lower arms.
+    When a lower arm lies in the plane of its upper arm and shoulder axis, for example in
+    line with the upper arm, the elbow moves square to the lower arm and that shoulder's
+    angular acceleration grows without bound, so accelerating torque does too: the cosine
+    between the lower arm and the elbow velocity.
     """
     theta = np.asarray(theta, dtype=float)
     lower_arms, elbow_rates = _lower_arms_and_elbow_rates(geom, theta)
     coplanar = abs(np.linalg.det(lower_arms / geom.lower_arm))
-    in_line = np.abs(np.sum(lower_arms * elbow_rates, axis=1)) / (geom.upper_arm * geom.lower_arm)
-    return float(min(coplanar, in_line.min()))
+    in_plane = np.abs(np.sum(lower_arms * elbow_rates, axis=1)) / (geom.upper_arm * geom.lower_arm)
+    return float(min(coplanar, in_plane.min()))

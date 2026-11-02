@@ -388,7 +388,10 @@ class TorqueReport:
             f"  tick error: {error}, end-effector at {where}",
         ]
         if self.near_singular:
-            lines.append(f"  left out {self.near_singular} positions near a singularity")
+            lines.append(
+                f"  left out {self.near_singular} positions near a singularity, "
+                "so the worst cases may read low"
+            )
         return "\n".join(lines)
 
 
@@ -426,8 +429,9 @@ def torque_report(
     """Find the worst shoulder torque and tick error across the workspace of geom.
 
     Positions near a singularity are left out and counted. Raises ValueError if the sweep
-    finds nothing else. A worst case that falls between samples is missed, so treat the
-    numbers as good to a few percent.
+    finds nothing else. A worst case that falls between samples is missed: on a workspace
+    clear of singularities the numbers are good to a few percent, but if any position was
+    left out the worst cases can sit against the limit and read 30% low or more.
     """
     reachable_positions = _sweep_positions(geom)
     margins = [singularity_margin(geom, inverse(geom, p)) for p in reachable_positions]
