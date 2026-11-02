@@ -3,14 +3,16 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from dros import DeltaGeometry, inverse
+from dros import DeltaGeometry, UnreachableError, forward, inverse
 from dros.analysis import (
     Cause,
     CylinderCheck,
+    Load,
     Shortfall,
     TargetCylinder,
     check_cylinder,
     reachable,
+    shoulder_torque,
     unreachable_cause,
 )
 
@@ -205,3 +207,104 @@ def test_a_passing_cylinder_holds_up_when_resampled_more_densely():
     heights = check.centre_z + np.linspace(-1.0, 1.0, 11) * target.height / 2
     r, a, z = np.meshgrid(radii, angles, heights)
     assert reachable(BOWL, np.stack([r * np.cos(a), r * np.sin(a), z], axis=-1)).all()
+
+
+# Shoulder offset 0.06, a 6-8-10 triangle at theta = 0 with the elbow straight out from
+# the shoulder. Only the vertical part of the lower arm force turns the shoulder, so each
+# one carries a third of the weight on a lever of upper_arm = 0.02.
+FLAT = replace(LIMITED, joint_min=-1.0)
+FLAT_POSITION = [0.0, 0.0, -0.06]
+
+# Shoulder offset 0.04, upper arm 0.05 at sin(theta) = 0.6: elbow at (0.08, -0.03) in the
+# plane of the arm, lower arm 0.10 running along (-0.8, -0.6) to the wrist at z = -0.09.
+TILTED = DeltaGeometry(
+    base_radius=0.06,
+    end_effector_radius=0.02,
+    upper_arm=0.05,
+    lower_arm=0.10,
+    joint_min=-1.0,
+    joint_max=1.4,
+)
+TILTED_POSITION = [0.0, 0.0, -0.09]
+
+
+def test_static_torque_of_a_centred_end_effector_on_a_horizontal_upper_arm():
+    load = Load(payload=0.4, end_effector_mass=0.2, upper_arm_mass=0.0, acceleration=0.0)
+    # (0.6 kg * 9.81 / 3) * 0.02 m
+    assert np.allclose(shoulder_torque(FLAT, FLAT_POSITION, load).static, 0.03924)
+
+
+def test_static_torque_of_a_centred_end_effector_on_a_tilted_upper_arm():
+    load = Load(payload=0.4, end_effector_mass=0.2, upper_arm_mass=0.0, acceleration=0.0)
+    # Lower arm tension T from 0.6 T = W / 3, with W = 0.6 kg * 9.81. The tension meets
+    # the upper arm's direction of travel (0.6, 0.8) with cosine 0.96, so
+    # torque = 0.05 * 0.96 * (5/9) W = 0.15696 N m
+    assert np.allclose(shoulder_torque(TILTED, TILTED_POSITION, load).static, 0.15696)
+
+
+def test_static_torque_includes_the_upper_arm_at_half_its_length():
+    load = Load(payload=0.4, end_effector_mass=0.2, upper_arm_mass=0.03, acceleration=0.0)
+    # 0.15696 from the end-effector, plus 0.03 kg * 9.81 * 0.025 m * cos(theta) = 0.8
+    assert np.allclose(shoulder_torque(TILTED, TILTED_POSITION, load).static, 0.162846)
+
+
+def test_static_torque_is_the_derivative_of_the_potential_energy():
+    geom = DeltaGeometry()
+    load = Load(payload=0.5, end_effector_mass=0.05, upper_arm_mass=0.03, acceleration=0.0)
+    mass = load.payload + load.end_effector_mass
+
+    def energy(theta: np.ndarray) -> float:
+        arms = load.upper_arm_mass * -0.5 * geom.upper_arm * np.sin(theta).sum()
+        return 9.81 * (mass * forward(geom, theta)[2] + arms)
+
+    rng = np.random.default_rng(5)
+    for theta in rng.uniform(0.0, 1.2, (30, 3)):
+        position = forward(geom, theta)
+        step = 1e-6 * np.eye(3)
+        numeric = [(energy(theta + d) - energy(theta - d)) / 2e-6 for d in step]
+        assert np.allclose(shoulder_torque(geom, position, load).static, np.abs(numeric))
+
+
+def test_shoulder_torque_refuses_a_position_out_of_reach():
+    load = Load(payload=0.0, end_effector_mass=0.0, upper_arm_mass=0.0, acceleration=0.0)
+    with pytest.raises(UnreachableError, match="joint limits"):
+        shoulder_torque(LIMITED, [0.0, 0.0, -0.059], load)
+
+
+@pytest.mark.parametrize("field", ["payload", "end_effector_mass", "upper_arm_mass", "acceleration"])
+@pytest.mark.parametrize("value", [-0.1, float("nan"), float("inf")])
+def test_load_refuses_a_value_that_is_not_a_size(field, value):
+    good = {"payload": 0.5, "end_effector_mass": 0.1, "upper_arm_mass": 0.1, "acceleration": 1.0}
+    with pytest.raises(ValueError):
+        Load(**{**good, field: value})
+
+
+def test_accelerating_torque_of_a_centred_end_effector():
+    load = Load(payload=0.4, end_effector_mass=0.2, upper_arm_mass=0.0, acceleration=2.0)
+    # Column 0 of the Jacobian is (-0.01, 0, -1/150) m/rad, 0.012019 long, so the worst
+    # direction adds 0.6 kg * 2 m/s^2 * 0.012019 m/rad = 0.014422 to the static 0.03924.
+    torque = shoulder_torque(FLAT, FLAT_POSITION, load)
+    assert np.allclose(torque.static, 0.03924)
+    assert np.allclose(torque.accelerating, 0.053662, atol=1e-6)
+
+
+def test_accelerating_torque_of_an_upper_arm_alone():
+    load = Load(payload=0.0, end_effector_mass=0.0, upper_arm_mass=0.03, acceleration=2.0)
+    # Rod inertia 0.03 * 0.02^2 / 3 = 4e-6 kg m^2. Lower arm (-0.08, 0, -0.06) over 0.0012
+    # gives dtheta/dp of (-200/3, 0, -50) rad/m, 83.33 long: 6.667e-4 N m on top of the
+    # static 0.03 * 9.81 * 0.01 = 0.002943.
+    torque = shoulder_torque(FLAT, FLAT_POSITION, load)
+    assert np.allclose(torque.accelerating, 0.0036097, atol=1e-6)
+
+
+def test_accelerating_end_effector_and_upper_arm_add_as_vectors():
+    load = Load(payload=0.4, end_effector_mass=0.2, upper_arm_mass=0.03, acceleration=2.0)
+    # 0.6 * (-0.01, -1/150) + 4e-6 * (-200/3, -50) = (-0.0062667, -0.0042), 0.0075440 long
+    torque = shoulder_torque(FLAT, FLAT_POSITION, load)
+    assert np.allclose(torque.accelerating, 0.03924 + 0.002943 + 2.0 * 0.0075440, atol=1e-6)
+
+
+def test_without_acceleration_the_two_torques_are_equal():
+    load = Load(payload=0.5, end_effector_mass=0.1, upper_arm_mass=0.03, acceleration=0.0)
+    torque = shoulder_torque(DeltaGeometry(), [0.05, 0.02, -0.2], load)
+    assert np.array_equal(torque.accelerating, torque.static)

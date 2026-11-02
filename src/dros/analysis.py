@@ -1,4 +1,4 @@
-"""Workspace analysis: which positions a geometry can reach, and if they cover a target."""
+"""Workspace analysis: what a geometry can reach, and the shoulder torque it takes."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,7 +9,7 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from .geometry import DeltaGeometry
-from .kinematics import UnreachableError, forward, inverse
+from .kinematics import UnreachableError, forward, inverse, jacobian
 
 # How densely a target cylinder is sampled. Rings are a fixed distance apart because
 # joint_min leaves small round holes in the workspace that wider rings can step over.
@@ -18,6 +18,8 @@ from .kinematics import UnreachableError, forward, inverse
 _LAYER_SPACING = 0.002  # m
 _RING_SPACING = 0.010  # m
 _RING_ANGLES = np.deg2rad(np.arange(0.0, 360.0, 15.0))
+
+GRAVITY = 9.81  # m/s^2
 
 
 class Cause(Enum):
@@ -193,3 +195,70 @@ def check_cylinder(geom: DeltaGeometry, target: TargetCylinder = DEFAULT_TARGET)
         samples=(intervals + 1) * len(disc),
         shortfalls=shortfalls,
     )
+
+
+@dataclass(frozen=True)
+class Load:
+    """What the shoulders have to carry, SI units.
+
+    payload:           mass carried by the end-effector (kg)
+    end_effector_mass: mass of the end-effector itself (kg)
+    upper_arm_mass:    mass of one upper arm, taken as uniform along its length (kg)
+    acceleration:      size of the end-effector acceleration, in any direction (m/s^2)
+
+    The lower arms are not modelled. Add their share to end_effector_mass.
+    """
+
+    payload: float
+    end_effector_mass: float
+    upper_arm_mass: float
+    acceleration: float
+
+    def __post_init__(self) -> None:
+        for value in (
+            self.payload,
+            self.end_effector_mass,
+            self.upper_arm_mass,
+            self.acceleration,
+        ):
+            if not 0.0 <= value < float("inf"):  # False for NaN
+                raise ValueError(f"load values must be finite and not negative: {self}")
+
+
+@dataclass(frozen=True)
+class ShoulderTorque:
+    """Torque size at each shoulder (N m, shape (3,)), indexed like the arms.
+
+    static:       holding still against gravity
+    accelerating: with load.acceleration in the worst direction for that shoulder,
+                  starting from rest. Each shoulder has its own worst direction.
+    """
+
+    static: np.ndarray
+    accelerating: np.ndarray
+
+
+def shoulder_torque(geom: DeltaGeometry, position: ArrayLike, load: Load) -> ShoulderTorque:
+    """Torque the shoulders need with the end-effector at position (m).
+
+    Raises UnreachableError if the end-effector cannot reach position.
+    """
+    position = np.asarray(position, dtype=float)
+    cause = unreachable_cause(geom, position)
+    if cause is not None:
+        raise UnreachableError(f"{position} is out of reach: {cause.value}")
+    theta = inverse(geom, position)
+    try:
+        moves = jacobian(geom, theta)
+        rates = np.linalg.inv(moves)
+    except np.linalg.LinAlgError:
+        raise UnreachableError(f"{position} is a singular position") from None
+
+    # Virtual work: the shoulders lift and accelerate the end-effector and upper arms.
+    # Torques that depend on speed are left out, so this holds from rest.
+    mass = load.payload + load.end_effector_mass
+    upper_arm_weight = load.upper_arm_mass * GRAVITY * geom.upper_arm / 2.0 * np.cos(theta)
+    static = np.abs(mass * GRAVITY * moves[2] - upper_arm_weight)
+    inertia = load.upper_arm_mass * geom.upper_arm**2 / 3.0  # uniform rod about its end
+    per_acceleration = np.linalg.norm(mass * moves.T + inertia * rates, axis=1)
+    return ShoulderTorque(static, static + load.acceleration * per_acceleration)
