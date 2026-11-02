@@ -1,13 +1,9 @@
-import time
-
 import numpy as np
 import pytest
 
 from dros import DeltaGeometry, UnreachableError, forward, inverse
 from dros.motion import (
     ShoulderOutsideLimitsError,
-    move_end_effector_position,
-    move_shoulder_angles,
     set_end_effector_position,
     set_shoulder_angles,
 )
@@ -17,6 +13,8 @@ GEOM = DeltaGeometry()  # placeholder dimensions: nothing here waits on the real
 POSITION_TOLERANCE = 0.5e-3  # m, about 2.5 times the worst tick rounding error
 MAX_VELOCITY = 3.0  # rad/s
 MAX_ACCELERATION = 10.0  # rad/s^2
+# Simulated time for any move within the joint limits to arrive, at the limits above.
+SETTLE_TIME = 2.0  # s
 
 
 def sim_bus():
@@ -86,7 +84,7 @@ UNREACHABLE = {
 def test_an_unreachable_position_raises_before_any_bus_command(position):
     bus = CallLogBus()
     with pytest.raises(UnreachableError):
-        move_end_effector_position(bus, GEOM, position, sleep=bus.advance)
+        set_end_effector_position(bus, GEOM, position)
     assert bus.calls == []
 
 
@@ -97,7 +95,7 @@ def test_a_position_that_is_not_finite_raises_before_any_bus_command(bad, axis):
     position = np.array(GEOM.rest_position)
     position[axis] = bad
     with pytest.raises(ValueError, match="not finite"):
-        move_end_effector_position(bus, GEOM, position, sleep=bus.advance)
+        set_end_effector_position(bus, GEOM, position)
     assert bus.calls == []
 
 
@@ -108,7 +106,7 @@ def test_starting_outside_the_joint_limits_stops_and_asks_to_reposition_by_hand(
     start[arm] = GEOM.joint_min - 0.05 if past == "joint_min" else GEOM.joint_max + 0.05
     bus = CallLogBus(start_angles=start)
     with pytest.raises(ShoulderOutsideLimitsError, match=rf"arm {arm}.*by hand"):
-        move_end_effector_position(bus, GEOM, GEOM.rest_position, sleep=bus.advance)
+        set_end_effector_position(bus, GEOM, GEOM.rest_position)
     assert "write_angles" not in bus.calls
     bus.advance(1.0)
     assert np.allclose(bus.read_angles(), start, rtol=0, atol=RAD_PER_TICK / 2)
@@ -121,7 +119,7 @@ def test_a_reading_that_is_not_finite_stops_without_asking_to_move_an_arm():
 
     bus = FailedReadBus(start_angles=[0.5, 0.5, 0.5])
     with pytest.raises(ShoulderOutsideLimitsError, match="arm 1.*not finite") as error:
-        move_end_effector_position(bus, GEOM, GEOM.rest_position, sleep=bus.advance)
+        set_end_effector_position(bus, GEOM, GEOM.rest_position)
     assert "by hand" not in str(error.value)
     assert "write_angles" not in bus.calls
 
@@ -129,32 +127,19 @@ def test_a_reading_that_is_not_finite_stops_without_asking_to_move_an_arm():
 def test_a_shoulder_target_outside_the_joint_limits_raises_before_any_bus_command():
     bus = CallLogBus()
     with pytest.raises(ValueError, match="joint limits"):
-        move_shoulder_angles(bus, GEOM, [0.5, GEOM.joint_max + 0.1, 0.5], sleep=bus.advance)
+        set_shoulder_angles(bus, GEOM, [0.5, GEOM.joint_max + 0.1, 0.5])
     assert bus.calls == []
 
 
-class SoftwareError(Exception):
-    pass
-
-
-def test_an_error_during_a_move_holds_the_last_target_with_torque_on():
+def test_a_failure_after_sending_holds_the_last_target_with_torque_on():
     bus = CallLogBus()
     target = np.array(GEOM.rest_position)
-    polls = 0
-
-    def failing_sleep(dt):
-        nonlocal polls
-        polls += 1
-        if polls == 5:  # part of the way there
-            raise SoftwareError
-        bus.advance(dt)
-
-    with pytest.raises(SoftwareError):
-        move_end_effector_position(bus, GEOM, target, sleep=failing_sleep)
-    assert "disable_torque" not in bus.calls
+    set_end_effector_position(bus, GEOM, target)
+    bus.advance(0.05)  # part of the way there, the application fails
     assert np.linalg.norm(end_effector_position(bus) - target) > POSITION_TOLERANCE
+    assert "disable_torque" not in bus.calls
     # The servos carry on to the last target on their own and hold it there.
-    bus.advance(5.0)
+    bus.advance(SETTLE_TIME)
     assert np.linalg.norm(end_effector_position(bus) - target) <= POSITION_TOLERANCE
 
 
@@ -162,36 +147,25 @@ def test_a_long_move_goes_out_as_one_joint_target():
     bus = RecordingBus()
     # From the shoulders at 0 rad to all three at about 1.17 rad.
     target = np.array([0.0, 0.0, -0.27])
-    move_end_effector_position(bus, GEOM, target, sleep=bus.advance)
+    set_end_effector_position(bus, GEOM, target)
+    bus.advance(SETTLE_TIME)
     assert len(bus.targets) == 1
     assert np.linalg.norm(end_effector_position(bus) - target) <= POSITION_TOLERANCE
 
 
-def test_each_target_is_reached_before_the_next_move_starts():
-    bus = RecordingBus()
-    targets = [
-        np.array([0.0, 0.0, -0.25]),
-        np.array([0.05, 0.03, -0.20]),
-        np.array([0.03, 0.03, -0.26]),
-    ]
-    for target in targets:
-        move_end_effector_position(bus, GEOM, target, sleep=bus.advance)
-    for previous, at_write in zip(targets, bus.positions_at_write[1:]):
-        assert np.linalg.norm(at_write - previous) <= POSITION_TOLERANCE
-
-
 def test_a_run_of_20_mm_down_from_rest_and_back_ends_at_rest_with_torque_off():
-    # The milestone run of issue #8, composed from move_end_effector_position as an application would.
+    # The milestone run of issue #8, composed from set_end_effector_position as an
+    # application would: it waits for each target and ends the run itself.
     bus = RecordingBus()
     rest = np.array(GEOM.rest_position)
     down = rest - [0.0, 0.0, 0.020]
     for target in (rest, down, rest):
-        move_end_effector_position(bus, GEOM, target, sleep=bus.advance)
+        set_end_effector_position(bus, GEOM, target)
+        bus.advance(SETTLE_TIME)
     bus.disable_torque()
 
     commanded = np.array([forward(GEOM, t) for t in bus.targets])
     assert np.allclose(commanded, [rest, down, rest], rtol=0, atol=1e-9)
-    # Each move started only once the one before it had arrived.
     for previous, at_write in zip([rest, down], bus.positions_at_write[1:]):
         assert np.linalg.norm(at_write - previous) <= POSITION_TOLERANCE
     # Torque went off once, with the end-effector at the rest position.
@@ -199,21 +173,6 @@ def test_a_run_of_20_mm_down_from_rest_and_back_ends_at_rest_with_torque_off():
     assert np.linalg.norm(at_torque_off - rest) <= POSITION_TOLERANCE
     with pytest.raises(RuntimeError, match="torque is off"):
         bus.write_angles(bus.read_angles())
-
-
-def test_move_end_effector_position_runs_on_virtual_time_with_no_real_waiting():
-    bus = sim_bus()
-    simulated = []
-
-    def sleep(dt):
-        simulated.append(dt)
-        bus.advance(dt)
-
-    started = time.monotonic()
-    move_end_effector_position(bus, GEOM, GEOM.rest_position, sleep=sleep)
-    # Coming from the shoulders at 0 rad takes about half a second of simulated time.
-    assert sum(simulated) > 0.3
-    assert time.monotonic() - started < 0.1
 
 
 def reachable_positions(rng, count):
@@ -230,33 +189,13 @@ def reachable_positions(rng, count):
 
 
 @pytest.mark.parametrize("seed", range(20))
-def test_move_end_effector_position_returns_with_the_shoulders_at_rest_on_the_target(seed):
+def test_the_end_effector_lands_within_half_a_millimetre_of_each_target(seed):
     rng = np.random.default_rng(seed)
     bus = sim_bus()
     for target in reachable_positions(rng, 5):
-        move_end_effector_position(bus, GEOM, target, sleep=bus.advance)
-        arrived = bus.read_angles()
-        bus.advance(1.0)
-        assert np.array_equal(bus.read_angles(), arrived)
+        set_end_effector_position(bus, GEOM, target)
+        bus.advance(SETTLE_TIME)
         assert np.linalg.norm(end_effector_position(bus) - target) <= POSITION_TOLERANCE
-
-
-def test_move_end_effector_position_reaches_a_position_on_simulated_time():
-    bus = sim_bus()
-    target = np.array([0.02, -0.01, -0.24])
-    move_end_effector_position(bus, GEOM, target, sleep=bus.advance)
-    assert np.linalg.norm(end_effector_position(bus) - target) <= POSITION_TOLERANCE
-
-
-def test_move_shoulder_angles_returns_with_the_shoulders_at_rest_on_the_target():
-    bus = sim_bus()
-    target = np.array([0.9, 1.1, 0.3])
-    move_shoulder_angles(bus, GEOM, target, sleep=bus.advance)
-    arrived = bus.read_angles()
-    bus.advance(1.0)
-    assert np.array_equal(bus.read_angles(), arrived)
-    # The sim bus reads back whole ticks: within half a tick of the target.
-    assert np.allclose(arrived, target, rtol=0, atol=RAD_PER_TICK / 2)
 
 
 def test_set_shoulder_angles_sends_the_target_and_returns_without_waiting():

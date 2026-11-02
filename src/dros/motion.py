@@ -1,19 +1,18 @@
 """Commanding the end-effector position, or the shoulder angles, through any joint bus.
 
-Two levels:
-- `set_*` sends a joint target and returns at once, for callers that run their own
-  loop or stream targets.
-- `move_*` sends a joint target and waits until the shoulders have settled on it,
-  so the next move starts from a known state.
+`set_*` checks the request, sends one joint target and returns at once. Waiting for
+the shoulders to arrive, and ending a run at the rest position with torque off, is
+up to the application.
 
 This is not trajectory control (ADR 0006): a move is one joint target, carried by
 the bus's own velocity and acceleration limits. The path between positions is not
 a straight line, and the shoulders may arrive at different times.
+
+These functions never touch torque. If anything fails after a target is sent, the
+servos keep holding it with torque on: turning torque off would drop the
+end-effector (ADR 0005).
 """
 from __future__ import annotations
-
-import time
-from collections.abc import Callable
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -84,66 +83,8 @@ def set_shoulder_angles(bus: JointBus, geom: DeltaGeometry, theta: ArrayLike) ->
 def set_end_effector_position(bus: JointBus, geom: DeltaGeometry, position: ArrayLike) -> None:
     """Send the joint target for `position` (m) and return without waiting.
 
-    Raises UnreachableError before any bus command if the position is out of the
-    workspace, and ShoulderOutsideLimitsError as `set_shoulder_angles` does.
+    Raises ValueError before any bus command if the position is not finite, and
+    UnreachableError if it is out of the workspace; otherwise fails as
+    `set_shoulder_angles` does.
     """
     set_shoulder_angles(bus, geom, _shoulder_angles_for(geom, position))
-
-
-def move_shoulder_angles(
-    bus: JointBus,
-    geom: DeltaGeometry,
-    theta: ArrayLike,
-    *,
-    sleep: Callable[[float], None] = time.sleep,
-    poll_interval: float = 0.01,
-    tolerance: float = 0.002,
-) -> None:
-    """Move the shoulders to `theta` (rad) and wait until they have settled there.
-
-    The wait polls `read_angles` every `poll_interval` seconds through `sleep`, until
-    every shoulder is within `tolerance` (rad) of its target and the reading is
-    unchanged since the poll before. `tolerance` only has to cover how far the bus
-    rounds a target; settling is what puts the shoulders on it. Pass a simulated
-    clock's advance as `sleep` to run on virtual time.
-
-    On any error the target stays sent and torque stays on, so the servos hold it:
-    turning torque off would drop the end-effector (ADR 0005). The motion functions
-    never touch torque; ending a run at the rest position with torque off is up to
-    the application.
-    """
-    target = np.asarray(theta, dtype=float)
-    set_shoulder_angles(bus, geom, target)
-    before = bus.read_angles()
-    while True:
-        sleep(poll_interval)
-        now = bus.read_angles()
-        if np.array_equal(now, before) and np.all(np.abs(now - target) <= tolerance):
-            return
-        before = now
-
-
-def move_end_effector_position(
-    bus: JointBus,
-    geom: DeltaGeometry,
-    position: ArrayLike,
-    *,
-    sleep: Callable[[float], None] = time.sleep,
-    poll_interval: float = 0.01,
-    tolerance: float = 0.002,
-) -> None:
-    """Move the end-effector to `position` (m) and wait until the shoulders reach it.
-
-    Inverse kinematics gives the shoulder angles; `move_shoulder_angles` sends and
-    waits for them, with `sleep`, `poll_interval` and `tolerance` passed on, and
-    fails as it does. Raises UnreachableError before any bus command if the
-    position is out of the workspace.
-    """
-    move_shoulder_angles(
-        bus,
-        geom,
-        _shoulder_angles_for(geom, position),
-        sleep=sleep,
-        poll_interval=poll_interval,
-        tolerance=tolerance,
-    )
