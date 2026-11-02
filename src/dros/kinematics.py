@@ -94,3 +94,19 @@ def forward(geom: DeltaGeometry, theta) -> np.ndarray:
     a = p1 + x * ex + y * ey + zc * ez
     b = p1 + x * ex + y * ey - zc * ez
     return a if a[2] < b[2] else b
+
+
+def jacobian(geom: DeltaGeometry, theta) -> np.ndarray:
+    """dp/dtheta (m/rad, shape (3, 3)) at joint angles theta (rad), for forward's position.
+
+    Column i is how the end-effector moves per radian of shoulder i. Each lower arm keeps
+    its length, so d_i . dp = d_i . e_i dtheta_i with d_i the lower arm and e_i the elbow
+    velocity. Raises numpy.linalg.LinAlgError if the three lower arms are coplanar.
+    """
+    theta = np.asarray(theta, dtype=float)
+    p = forward(geom, theta)
+    lower_arms = p - _elbows_shifted(geom, theta)
+    s, c = geom.upper_arm * np.sin(theta), geom.upper_arm * np.cos(theta)
+    phi = geom.arm_angles
+    elbow_rates = np.column_stack([-s * np.cos(phi), -s * np.sin(phi), -c])
+    return np.linalg.solve(lower_arms, np.diag(np.sum(lower_arms * elbow_rates, axis=1)))
